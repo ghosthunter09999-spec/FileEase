@@ -1,9 +1,10 @@
-import { FileImage, FilePlus2, FileText, Gauge, Images, LayoutDashboard, Minimize2 } from "lucide-react";
+import { Camera, FileImage, FilePlus2, FileText, Gauge, Images, LayoutDashboard, Minimize2 } from "lucide-react";
 
 export const tools = [
   { id: "home", label: "Overview", icon: LayoutDashboard, group: "WORKSPACE" },
   { id: "image-compressor", label: "Image compressor", icon: Gauge, group: "IMAGE TOOLS", tag: "Popular" },
   { id: "image-to-pdf", label: "Images to PDF", icon: FilePlus2, group: "IMAGE TOOLS" },
+  { id: "cam-scanner", label: "Cam Scanner", icon: Camera, group: "IMAGE TOOLS" },
   { id: "pdf-compressor", label: "PDF compressor", icon: Minimize2, group: "PDF TOOLS" },
   { id: "pdf-to-images", label: "PDF to images", icon: Images, group: "PDF TOOLS" },
   { id: "text-to-pdf", label: "Text to PDF", icon: FileText, group: "PDF TOOLS" },

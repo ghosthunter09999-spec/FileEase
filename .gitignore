@@ -1,9 +1,19 @@
+# Dependencies
 node_modules/
+
+# Build
 dist/
-.vite/
+build/
+
+# Local
 .env
-.env.*
-!.env.example
+.env.local
 *.log
+
+# Editor
+.vscode/
+.idea/
+
+# OS
 .DS_Store
 Thumbs.db
