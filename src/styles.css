@@ -387,6 +387,18 @@ a { text-decoration: none; }
 .scanner-crop-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-soft); }
 .scanner-crop-actions p { flex: 1 1 100%; margin: 0 0 2px; color: var(--muted); font-size: 9px; }
 .scanner-crop-actions .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 7px; font-size: 9px; font-weight: 600; }
+.scanner-ocr { margin-top: 14px; padding: 13px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-soft); }
+.scanner-ocr .scanner-settings-title { margin-bottom: 0; }
+.scanner-ocr-intro { margin-top: 6px; }
+.scanner-ocr-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 11px; }
+.scanner-ocr-language { min-width: 180px; display: flex; align-items: center; gap: 7px; color: var(--muted); }
+.scanner-ocr-language .form-select { flex: 1; }
+.scanner-ocr-controls > .btn, .scanner-ocr-actions > .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 10px; border-radius: 7px; font-size: 9px; font-weight: 600; }
+.scanner-ocr-result { margin-top: 12px; }
+.scanner-ocr-result > label { display: block; margin-bottom: 5px; color: var(--text); font-size: 9px; font-weight: 700; }
+.scanner-ocr-result textarea { width: 100%; min-height: 150px; resize: vertical; padding: 10px; color: var(--text); border: 1px solid var(--border); border-radius: 7px; background: var(--surface); font-size: 11px; line-height: 1.6; }
+.scanner-ocr-result textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.scanner-ocr-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
 
 @media (max-width: 600px) {
   .scanner-start-card { min-height: 245px; padding: 20px 15px; }
@@ -400,4 +412,5 @@ a { text-decoration: none; }
   .scanner-bottom-actions .btn { flex: 1; }
   .scanner-mode-grid { grid-template-columns: 1fr; }
   .scanner-crop-actions .btn { flex: 1; justify-content: center; }
+  .scanner-ocr-controls > .btn { flex: 1; }
 }

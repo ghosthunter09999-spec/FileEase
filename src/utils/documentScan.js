@@ -387,8 +387,8 @@ export async function enhanceDocument(blob, mode) {
     const histogram = new Uint32Array(256);
     const pixels = canvas.width * canvas.height;
     const localThresholds = mode === "bw" ? new Uint8Array(pixels) : null;
-    const contrast = mode === "enhanced" ? 1.12 : 1;
-    const saturation = mode === "enhanced" ? 1.12 : 1;
+    const contrast = mode === "clean" ? 1.18 : mode === "enhanced" ? 1.12 : 1;
+    const saturation = mode === "enhanced" ? 1.12 : mode === "clean" ? 1.04 : 1;
     for (let y = 0; y < canvas.height; y += 1) {
       const backdropY = (y / canvas.height) * (backdrop.height - 1);
       const by0 = Math.floor(backdropY);
@@ -407,7 +407,7 @@ export async function enhanceDocument(blob, mode) {
         const backgroundTop = backdropPixels.data[baseTop] * (1 - horizontal) + backdropPixels.data[baseTopRight] * horizontal;
         const backgroundBottom = backdropPixels.data[baseBottom] * (1 - horizontal) + backdropPixels.data[baseBottomRight] * horizontal;
         const backgroundLight = Math.max(75, backgroundTop * (1 - vertical) + backgroundBottom * vertical);
-        const gain = Math.min(2.1, 238 / backgroundLight);
+        const gain = Math.min(mode === "clean" ? 2.35 : 2.1, (mode === "clean" ? 248 : 238) / backgroundLight);
         if (localThresholds) {
           localThresholds[y * canvas.width + x] = Math.max(95, Math.min(205, backgroundLight * 0.64));
         }
@@ -440,6 +440,27 @@ export async function enhanceDocument(blob, mode) {
       }
     }
     context.putImageData(frame, 0, 0);
+
+    if (mode === "clean") {
+      const edgeDepth = Math.max(1, Math.round(Math.min(canvas.width, canvas.height) * 0.018));
+      const cleaned = context.getImageData(0, 0, canvas.width, canvas.height);
+      for (let y = 0; y < canvas.height; y += 1) {
+        for (let x = 0; x < canvas.width; x += 1) {
+          const edgeDistance = Math.min(x, y, canvas.width - 1 - x, canvas.height - 1 - y);
+          if (edgeDistance >= edgeDepth) continue;
+          const offset = (y * canvas.width + x) * 4;
+          const luminance = cleaned.data[offset] * 0.299
+            + cleaned.data[offset + 1] * 0.587
+            + cleaned.data[offset + 2] * 0.114;
+          if (luminance >= 125) continue;
+          const edgeWeight = (1 - edgeDistance / edgeDepth) * 0.28;
+          for (let channel = 0; channel < 3; channel += 1) {
+            cleaned.data[offset + channel] += (220 - cleaned.data[offset + channel]) * edgeWeight;
+          }
+        }
+      }
+      context.putImageData(cleaned, 0, 0);
+    }
 
     if (mode !== "bw" && canvas.width > 2 && canvas.height > 2) {
       const blurCanvas = document.createElement("canvas");

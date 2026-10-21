@@ -2,9 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Camera,
   Check,
+  Copy,
   Download,
   FilePlus2,
+  FileText,
   ImagePlus,
+  Languages,
   MoveLeft,
   MoveRight,
   RotateCw,
@@ -15,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { PDFDocument } from "pdf-lib";
+import { createWorker } from "tesseract.js";
 import ProgressBar from "../components/ProgressBar.jsx";
 import UploadZone from "../components/UploadZone.jsx";
 import { downloadBlob, formatBytes } from "../utils/files.js";
@@ -67,6 +71,12 @@ export default function CamScanner({ notify }) {
   const [activeCorner, setActiveCorner] = useState(null);
   const [compareSide, setCompareSide] = useState("after");
   const [mode, setMode] = useState("enhanced");
+  const [ocrLanguage, setOcrLanguage] = useState("eng");
+  const [ocrProgress, setOcrProgress] = useState(null);
+  const [ocrStatus, setOcrStatus] = useState("");
+  const [ocrText, setOcrText] = useState("");
+  const [ocrSource, setOcrSource] = useState(null);
+  const [ocrError, setOcrError] = useState("");
   const videoRef = useRef(null);
   const cameraStreamRef = useRef(null);
   const uploadInputRef = useRef(null);
@@ -328,7 +338,7 @@ export default function CamScanner({ notify }) {
       return;
     }
     setProcessing(true);
-    setStatus(mode === "bw" ? "Applying clean black & white scan…" : "Removing shadows and enhancing page…");
+    setStatus(mode === "bw" ? "Applying clean black & white scan…" : mode === "clean" ? "Cleaning stains and softening dark edges…" : "Removing shadows and enhancing page…");
     setError("");
     try {
       const enhanced = await enhanceDocument(selectedPage.working, mode);
@@ -345,6 +355,78 @@ export default function CamScanner({ notify }) {
     } finally {
       setProcessing(false);
     }
+  }
+
+  async function extractText() {
+    if (!selectedPage || processing || ocrProgress !== null) return;
+    setOcrProgress(0);
+    setOcrStatus("Preparing text recognition…");
+    setOcrError("");
+    setOcrText("");
+    setOcrSource(null);
+    let worker;
+    try {
+      worker = await createWorker(ocrLanguage, undefined, {
+        logger: ({ status: workerStatus, progress: workerProgress }) => {
+          setOcrStatus(workerStatus === "recognizing text" ? "Reading text…" : "Loading OCR language data…");
+          if (Number.isFinite(workerProgress)) setOcrProgress(Math.round(workerProgress * 100));
+        },
+      });
+      const { data } = await worker.recognize(selectedPage.image);
+      const text = data.text.trim();
+      setOcrText(text);
+      setOcrSource(selectedPage.image);
+      if (text) notify("Text extracted successfully.");
+      else notify("OCR finished, but no text was detected.", "error");
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Couldn't extract text from this image.";
+      setOcrError(message);
+      notify(message, "error");
+    } finally {
+      if (worker) {
+        try {
+          await worker.terminate();
+        } catch (cause) {
+          const message = cause instanceof Error ? cause.message : "Couldn't stop the OCR worker.";
+          setOcrError((current) => current ? `${current} ${message}` : message);
+          notify(message, "error");
+        }
+      }
+      setOcrProgress(null);
+      setOcrStatus("");
+    }
+  }
+
+  async function copyExtractedText() {
+    if (!ocrText || ocrSource !== selectedPage?.image) return;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(ocrText);
+      } else {
+        const textArea = document.createElement("textarea");
+        textArea.value = ocrText;
+        textArea.setAttribute("readonly", "");
+        textArea.style.position = "fixed";
+        textArea.style.opacity = "0";
+        document.body.append(textArea);
+        textArea.select();
+        const copied = document.execCommand("copy");
+        textArea.remove();
+        if (!copied) throw new Error("Clipboard access isn't available in this browser.");
+      }
+      notify("Extracted text copied.");
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Couldn't copy the extracted text.";
+      setOcrError(message);
+      notify(message, "error");
+    }
+  }
+
+  function downloadExtractedText() {
+    if (!ocrText || ocrSource !== selectedPage?.image) return;
+    const filename = `fileease-page-${selectedIndex + 1}-text.txt`;
+    downloadBlob(new Blob([`\uFEFF${ocrText}`], { type: "text/plain;charset=utf-8" }), filename);
+    notify("Extracted text downloaded.");
   }
 
   async function rotateSelected() {
@@ -578,11 +660,12 @@ export default function CamScanner({ notify }) {
                     <div className="scanner-mode-grid" role="group" aria-label="Enhancement mode">
                       {[
                         ["original", "Original", "Keep the image unchanged"],
+                        ["clean", "Document cleaner", "Lift stains and soften dark edges"],
                         ["bw", "Black & white (strong)", "Clean binary document scan"],
                         ["gray", "Grayscale", "Balanced monochrome"],
                         ["enhanced", "Enhanced color", "Remove shadows and sharpen"],
                       ].map(([value, label, description]) => (
-                        <button type="button" key={value} className={`scanner-mode-option ${mode === value ? "selected" : ""}`} onClick={() => setMode(value)}>
+                        <button type="button" key={value} aria-pressed={mode === value} className={`scanner-mode-option ${mode === value ? "selected" : ""}`} onClick={() => setMode(value)}>
                           <span className="scanner-mode-radio" />
                           <span><strong>{label}</strong><small>{description}</small></span>
                         </button>
@@ -593,12 +676,52 @@ export default function CamScanner({ notify }) {
                       <button className="btn btn-outline-primary" disabled={processing} onClick={editCorners}><ScanLine size={15} /> Adjust corners</button>
                       <button className="btn btn-outline-primary" disabled={processing} onClick={rotateSelected}><RotateCw size={15} /> Rotate</button>
                       <button className="btn btn-primary" disabled={processing} onClick={enhanceSelected}>
-                        {mode === "original" ? <><Check size={15} /> Restore original</> : <><WandSparkles size={15} /> Enhance</>}
+                        {mode === "original"
+                          ? <><Check size={15} /> Restore original</>
+                          : mode === "clean"
+                            ? <><WandSparkles size={15} /> Clean Document</>
+                            : <><WandSparkles size={15} /> Enhance</>}
                       </button>
                     </div>
-                    <p className="scanner-hint">Enhancement uses local canvas processing with shadow normalization, adaptive thresholding for black &amp; white, and edge sharpening.</p>
+                    <p className="scanner-hint">Cleaning lifts uneven backgrounds, improves text contrast, and gently lightens dark pixels near the outer edge. Black &amp; white uses adaptive thresholding; all processing stays on-device.</p>
                   </div>
                 </>
+              )}
+              {!cropEditing && (
+                <section className="scanner-ocr" aria-labelledby="scanner-ocr-title">
+                  <div className="scanner-settings-title"><FileText size={15} /><strong id="scanner-ocr-title">Text extractor (OCR)</strong></div>
+                  <p className="scanner-hint scanner-ocr-intro">Recognize text from this page on your device. The first run downloads the selected OCR language data for local processing.</p>
+                  <div className="scanner-ocr-controls">
+                    <label className="scanner-ocr-language">
+                      <Languages size={14} />
+                      <span className="sr-only">OCR language</span>
+                      <select
+                        className="form-select"
+                        value={ocrLanguage}
+                        disabled={processing || ocrProgress !== null}
+                        onChange={(event) => setOcrLanguage(event.target.value)}
+                      >
+                        <option value="eng">English</option>
+                        <option value="eng+urd">English + Urdu</option>
+                      </select>
+                    </label>
+                    <button className="btn btn-primary" type="button" disabled={processing || ocrProgress !== null} onClick={extractText}>
+                      <FileText size={15} /> {ocrProgress !== null ? "Extracting…" : "Extract Text"}
+                    </button>
+                  </div>
+                  {ocrProgress !== null && <ProgressBar value={ocrProgress} label={ocrStatus || "Extracting text…"} />}
+                  {ocrError && <div className="inline-error" role="alert">{ocrError}</div>}
+                  {ocrText && ocrSource === selectedPage.image && (
+                    <div className="scanner-ocr-result">
+                      <label htmlFor="scanner-ocr-text">Extracted text</label>
+                      <textarea id="scanner-ocr-text" dir="auto" readOnly value={ocrText} />
+                      <div className="scanner-ocr-actions">
+                        <button className="btn btn-outline-primary" type="button" onClick={copyExtractedText}><Copy size={14} /> Copy Text</button>
+                        <button className="btn btn-outline-primary" type="button" onClick={downloadExtractedText}><Download size={14} /> Download .txt</button>
+                      </div>
+                    </div>
+                  )}
+                </section>
               )}
             </>
           )}
