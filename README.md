@@ -9,7 +9,7 @@ FileEase is a private, browser-only toolkit for common image and PDF tasks. File
 - Compress PDFs by rendering pages into optimized images. This can significantly reduce file size, but text selection, forms, and vector content are not retained.
 - Convert PDF pages into PNG/JPG images and download them as a ZIP.
 - Create a paginated PDF from text or a `.txt` file.
-- Scan, enhance, reorder, and export camera captures or document photos as a PDF.
+- Scan, auto-crop and perspective-flatten document photos, manually adjust crop corners, enhance pages in four modes, reorder pages, and export a PDF.
 - Responsive interface with a persistent light/dark theme.
 
 ## Requirements
@@ -60,4 +60,4 @@ For tool pages to be independently indexed and included as individual sitemap en
 
 Your files never leave your device. File processing uses browser APIs and local JavaScript libraries. No file contents are sent to a server. The optional Google Fonts stylesheet can make a network request for fonts; use system fonts or self-host the fonts if your deployment must make no third-party requests.
 
-Camera scanning requires browser camera permission and a secure context (HTTPS or `localhost`). If camera access is unavailable, add document photos from your device instead.
+Camera scanning requires browser camera permission and a secure context (HTTPS or `localhost`). If camera access is unavailable, add document photos from your device instead. Automatic crop detection works best when the page contrasts with the surface behind it; when it cannot identify page edges confidently, adjust the four crop handles manually. All detection, perspective correction, and enhancement run locally in Canvas without uploading images.

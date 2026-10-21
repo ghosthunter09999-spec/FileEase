@@ -3,7 +3,6 @@ import {
   Camera,
   Check,
   Download,
-  FileImage,
   FilePlus2,
   ImagePlus,
   MoveLeft,
@@ -19,166 +18,37 @@ import { PDFDocument } from "pdf-lib";
 import ProgressBar from "../components/ProgressBar.jsx";
 import UploadZone from "../components/UploadZone.jsx";
 import { downloadBlob, formatBytes } from "../utils/files.js";
+import {
+  createPageId,
+  decodeImage,
+  detectDocumentCorners,
+  enhanceDocument,
+  normalizeImage,
+  perspectiveCrop,
+  rotateImage,
+} from "../utils/documentScan.js";
 
-const MAX_IMAGE_SIDE = 3200;
+const DEFAULT_CORNERS = (width, height) => [
+  { x: width * 0.035, y: height * 0.035 },
+  { x: width * 0.965, y: height * 0.035 },
+  { x: width * 0.965, y: height * 0.965 },
+  { x: width * 0.035, y: height * 0.965 },
+];
 
-function createPageId() {
-  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
-}
-
-async function imageFromBlob(blob) {
-  if (typeof createImageBitmap === "function") return createImageBitmap(blob);
-  const url = URL.createObjectURL(blob);
-  try {
-    const image = new Image();
-    image.src = url;
-    await image.decode();
-    return image;
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-
-function canvasToJpeg(canvas) {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => (blob ? resolve(blob) : reject(new Error("Couldn't save this scanned page as an image."))),
-      "image/jpeg",
-      0.96,
-    );
-  });
-}
-
-async function normalizeImage(blob) {
-  const image = await imageFromBlob(blob);
-  try {
-    const scale = Math.min(1, MAX_IMAGE_SIDE / Math.max(image.width, image.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(image.width * scale));
-    canvas.height = Math.max(1, Math.round(image.height * scale));
-    const context = canvas.getContext("2d", { alpha: false });
-    if (!context) throw new Error("Your browser couldn't prepare an image canvas.");
-    context.fillStyle = "#fff";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.drawImage(image, 0, 0, canvas.width, canvas.height);
-    return await canvasToJpeg(canvas);
-  } finally {
-    image.close?.();
-  }
-}
-
-function findDocumentBounds(imageData, width, height) {
-  const { data } = imageData;
-  const corners = [
-    [0, 0],
-    [width - 1, 0],
-    [0, height - 1],
-    [width - 1, height - 1],
-  ];
-  const background = [0, 0, 0];
-  for (const [x, y] of corners) {
-    const offset = (y * width + x) * 4;
-    for (let channel = 0; channel < 3; channel += 1) background[channel] += data[offset + channel] / 4;
-  }
-
-  let left = width;
-  let right = -1;
-  let top = height;
-  let bottom = -1;
-  const stride = Math.max(1, Math.floor(Math.min(width, height) / 500));
-  for (let y = 0; y < height; y += stride) {
-    for (let x = 0; x < width; x += stride) {
-      const offset = (y * width + x) * 4;
-      const difference = Math.abs(data[offset] - background[0])
-        + Math.abs(data[offset + 1] - background[1])
-        + Math.abs(data[offset + 2] - background[2]);
-      if (difference > 105) {
-        left = Math.min(left, x);
-        right = Math.max(right, x);
-        top = Math.min(top, y);
-        bottom = Math.max(bottom, y);
-      }
-    }
-  }
-
-  if (right < 0 || (right - left) < width * 0.5 || (bottom - top) < height * 0.5) {
-    return { x: 0, y: 0, width, height };
-  }
-  const padding = Math.round(Math.min(width, height) * 0.015);
-  const x = Math.max(0, left - padding);
-  const y = Math.max(0, top - padding);
+function createPage(image, width, height) {
   return {
-    x,
-    y,
-    width: Math.min(width - x, right - left + padding * 2),
-    height: Math.min(height - y, bottom - top + padding * 2),
+    id: createPageId(),
+    original: image,
+    working: image,
+    image,
+    originalWidth: width,
+    originalHeight: height,
+    width,
+    height,
+    sourceWidth: width,
+    sourceHeight: height,
+    corners: null,
   };
-}
-
-function sharpenPixels(context, width, height, amount) {
-  if (amount <= 0 || width < 3 || height < 3) return;
-  const frame = context.getImageData(0, 0, width, height);
-  const source = new Uint8ClampedArray(frame.data);
-  const strength = amount / 100;
-  for (let y = 1; y < height - 1; y += 1) {
-    for (let x = 1; x < width - 1; x += 1) {
-      const offset = (y * width + x) * 4;
-      for (let channel = 0; channel < 3; channel += 1) {
-        const average = (
-          source[offset - 4 + channel]
-          + source[offset + 4 + channel]
-          + source[offset - width * 4 + channel]
-          + source[offset + width * 4 + channel]
-        ) / 4;
-        frame.data[offset + channel] = source[offset + channel] + (source[offset + channel] - average) * strength;
-      }
-    }
-  }
-  context.putImageData(frame, 0, 0);
-}
-
-async function enhancePage(blob, settings) {
-  const image = await imageFromBlob(blob);
-  try {
-    const source = document.createElement("canvas");
-    source.width = image.width;
-    source.height = image.height;
-    const sourceContext = source.getContext("2d", { willReadFrequently: settings.autoCrop });
-    if (!sourceContext) throw new Error("Your browser couldn't prepare an image canvas.");
-    sourceContext.drawImage(image, 0, 0);
-    const bounds = settings.autoCrop
-      ? findDocumentBounds(sourceContext.getImageData(0, 0, source.width, source.height), source.width, source.height)
-      : { x: 0, y: 0, width: source.width, height: source.height };
-    const rotated = settings.rotation % 180 !== 0;
-    const canvas = document.createElement("canvas");
-    canvas.width = rotated ? bounds.height : bounds.width;
-    canvas.height = rotated ? bounds.width : bounds.height;
-    const context = canvas.getContext("2d", { alpha: false, willReadFrequently: settings.sharpness > 0 });
-    if (!context) throw new Error("Your browser couldn't prepare an image canvas.");
-    context.fillStyle = "#fff";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.save();
-    context.translate(canvas.width / 2, canvas.height / 2);
-    context.rotate((settings.rotation * Math.PI) / 180);
-    context.filter = `brightness(${settings.brightness}%) contrast(${settings.contrast}%)${settings.mode === "color" ? "" : " grayscale(1)"}`;
-    context.drawImage(image, bounds.x, bounds.y, bounds.width, bounds.height, -bounds.width / 2, -bounds.height / 2, bounds.width, bounds.height);
-    context.restore();
-    if (settings.mode === "bw") {
-      const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
-      for (let index = 0; index < pixels.data.length; index += 4) {
-        const luminance = pixels.data[index] * 0.299 + pixels.data[index + 1] * 0.587 + pixels.data[index + 2] * 0.114;
-        const value = luminance >= 155 ? 255 : 0;
-        pixels.data[index] = value;
-        pixels.data[index + 1] = value;
-        pixels.data[index + 2] = value;
-      }
-      context.putImageData(pixels, 0, 0);
-    }
-    sharpenPixels(context, canvas.width, canvas.height, settings.sharpness);
-    return await canvasToJpeg(canvas);
-  } finally {
-    image.close?.();
-  }
 }
 
 export default function CamScanner({ notify }) {
@@ -193,21 +63,26 @@ export default function CamScanner({ notify }) {
   const [error, setError] = useState("");
   const [draggedId, setDraggedId] = useState(null);
   const [retakeTarget, setRetakeTarget] = useState(null);
-  const [settings, setSettings] = useState({
-    mode: "color",
-    brightness: 100,
-    contrast: 115,
-    sharpness: 20,
-    rotation: 0,
-    autoCrop: false,
-  });
+  const [cropEditing, setCropEditing] = useState(false);
+  const [activeCorner, setActiveCorner] = useState(null);
+  const [compareSide, setCompareSide] = useState("after");
+  const [mode, setMode] = useState("enhanced");
   const videoRef = useRef(null);
   const cameraStreamRef = useRef(null);
   const uploadInputRef = useRef(null);
+  const cropSvgRef = useRef(null);
   const selectedPage = pages.find((page) => page.id === selectedId) ?? null;
-  const previews = useMemo(() => pages.map((page) => URL.createObjectURL(page.image)), [pages]);
+  const previews = useMemo(() => pages.map((page) => ({
+    image: URL.createObjectURL(page.image),
+    original: URL.createObjectURL(page.original),
+    working: URL.createObjectURL(page.working),
+  })), [pages]);
 
-  useEffect(() => () => previews.forEach((url) => URL.revokeObjectURL(url)), [previews]);
+  useEffect(() => () => previews.forEach((preview) => {
+    URL.revokeObjectURL(preview.image);
+    URL.revokeObjectURL(preview.original);
+    URL.revokeObjectURL(preview.working);
+  }), [previews]);
 
   useEffect(() => {
     if (!cameraEnabled) {
@@ -275,30 +150,36 @@ export default function CamScanner({ notify }) {
 
   async function capturePage() {
     const video = videoRef.current;
-    if (!video || !video.videoWidth || !video.videoHeight) return;
+    if (!video?.videoWidth || !video.videoHeight) return;
     setProcessing(true);
     setStatus("Preparing captured page…");
     try {
-      const scale = Math.min(1, MAX_IMAGE_SIDE / Math.max(video.videoWidth, video.videoHeight));
+      const scale = Math.min(1, 3000 / Math.max(video.videoWidth, video.videoHeight));
       const canvas = document.createElement("canvas");
       canvas.width = Math.round(video.videoWidth * scale);
       canvas.height = Math.round(video.videoHeight * scale);
       const context = canvas.getContext("2d", { alpha: false });
       if (!context) throw new Error("Your browser couldn't prepare the camera image.");
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const image = await canvasToJpeg(canvas);
-      const id = retakeTarget;
-      if (id) {
-        setPages((current) => current.map((page) => page.id === id ? { ...page, original: image, image } : page));
-        setSelectedId(id);
+      const image = await new Promise((resolve, reject) => canvas.toBlob(
+        (blob) => blob ? resolve(blob) : reject(new Error("Couldn't capture this page.")),
+        "image/jpeg",
+        0.98,
+      ));
+      if (retakeTarget) {
+        const updated = createPage(image, canvas.width, canvas.height);
+        updated.id = retakeTarget;
+        setPages((current) => current.map((page) => page.id === retakeTarget ? updated : page));
+        setSelectedId(retakeTarget);
         notify("Page retaken.");
       } else {
-        const page = { id: createPageId(), original: image, image };
+        const page = createPage(image, canvas.width, canvas.height);
         setPages((current) => [...current, page]);
         setSelectedId(page.id);
         notify("Page captured.");
       }
-      setSettings((current) => ({ ...current, rotation: 0 }));
+      setCropEditing(false);
+      setCompareSide("after");
       stopCamera();
       setStatus("");
     } catch (cause) {
@@ -320,11 +201,13 @@ export default function CamScanner({ notify }) {
     try {
       const added = [];
       for (const file of accepted) {
-        const image = await normalizeImage(file);
-        added.push({ id: createPageId(), original: image, image });
+        const normalized = await normalizeImage(file);
+        added.push(createPage(normalized.blob, normalized.width, normalized.height));
       }
       setPages((current) => [...current, ...added]);
       setSelectedId(added[0].id);
+      setCompareSide("after");
+      setCropEditing(false);
       setStatus("");
       if (cameraEnabled) stopCamera();
       notify(`${added.length} page${added.length === 1 ? "" : "s"} added.`);
@@ -337,19 +220,160 @@ export default function CamScanner({ notify }) {
     }
   }
 
-  async function enhanceSelected() {
+  async function autoCropSelected() {
     if (!selectedPage) return;
     setProcessing(true);
-    setStatus("Enhancing page…");
+    setStatus("Detecting document edges…");
     setError("");
     try {
-      const image = await enhancePage(selectedPage.original, settings);
-      setPages((current) => current.map((page) => page.id === selectedPage.id ? { ...page, image } : page));
+      const corners = await detectDocumentCorners(selectedPage.working);
+      if (!corners) {
+        setPages((current) => current.map((page) => page.id === selectedPage.id
+          ? { ...page, corners: DEFAULT_CORNERS(page.sourceWidth, page.sourceHeight) }
+          : page));
+        setCropEditing(true);
+        setCompareSide("before");
+        setStatus("");
+        notify("Couldn't confidently detect all page edges. Adjust the four corners, then apply the crop.");
+        return;
+      }
+      const cropped = await perspectiveCrop(selectedPage.working, corners);
+      setPages((current) => current.map((page) => page.id === selectedPage.id
+        ? {
+          ...page,
+          working: cropped.blob,
+          image: cropped.blob,
+          width: cropped.width,
+          height: cropped.height,
+          sourceWidth: cropped.width,
+          sourceHeight: cropped.height,
+          corners: null,
+        }
+        : page));
+      setCropEditing(false);
+      setCompareSide("after");
       setStatus("");
-      notify("Page enhanced.");
+      notify("Document detected, cropped, and perspective-corrected.");
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Couldn't crop this document.";
+      setError(message);
+      setStatus("");
+      notify(message, "error");
+    } finally {
+      setProcessing(false);
+    }
+  }
+
+  async function applyManualCrop() {
+    if (!selectedPage?.corners) return;
+    setProcessing(true);
+    setStatus("Flattening selected page…");
+    setError("");
+    try {
+      const cropped = await perspectiveCrop(selectedPage.working, selectedPage.corners);
+      setPages((current) => current.map((page) => page.id === selectedPage.id
+        ? {
+          ...page,
+          working: cropped.blob,
+          image: cropped.blob,
+          width: cropped.width,
+          height: cropped.height,
+          sourceWidth: cropped.width,
+          sourceHeight: cropped.height,
+          corners: null,
+        }
+        : page));
+      setCropEditing(false);
+      setCompareSide("after");
+      setStatus("");
+      notify("Page cropped and flattened.");
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Couldn't crop this page.";
+      setError(message);
+      setStatus("");
+      notify(message, "error");
+    } finally {
+      setProcessing(false);
+    }
+  }
+
+  function editCorners() {
+    if (!selectedPage) return;
+    setPages((current) => current.map((page) => page.id === selectedPage.id
+      ? { ...page, corners: page.corners ?? DEFAULT_CORNERS(page.sourceWidth, page.sourceHeight) }
+      : page));
+    setCropEditing(true);
+    setCompareSide("before");
+  }
+
+  function updateCorner(event) {
+    if (activeCorner === null || !selectedPage || !cropSvgRef.current) return;
+    const bounds = cropSvgRef.current.getBoundingClientRect();
+    const x = Math.max(0, Math.min(selectedPage.sourceWidth, ((event.clientX - bounds.left) / bounds.width) * selectedPage.sourceWidth));
+    const y = Math.max(0, Math.min(selectedPage.sourceHeight, ((event.clientY - bounds.top) / bounds.height) * selectedPage.sourceHeight));
+    setPages((current) => current.map((page) => {
+      if (page.id !== selectedPage.id || !page.corners) return page;
+      const corners = [...page.corners];
+      corners[activeCorner] = { x, y };
+      return { ...page, corners };
+    }));
+  }
+
+  async function enhanceSelected() {
+    if (!selectedPage) return;
+    if (mode === "original") {
+      setPages((current) => current.map((page) => page.id === selectedPage.id ? { ...page, image: page.working } : page));
+      setCompareSide("after");
+      notify("Original scan restored.");
+      return;
+    }
+    setProcessing(true);
+    setStatus(mode === "bw" ? "Applying clean black & white scan…" : "Removing shadows and enhancing page…");
+    setError("");
+    try {
+      const enhanced = await enhanceDocument(selectedPage.working, mode);
+      setPages((current) => current.map((page) => page.id === selectedPage.id ? { ...page, image: enhanced } : page));
+      setCropEditing(false);
+      setCompareSide("after");
+      setStatus("");
+      notify("Document enhancement complete.");
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Couldn't enhance this page.";
       setError(message);
+      setStatus("");
+      notify(message, "error");
+    } finally {
+      setProcessing(false);
+    }
+  }
+
+  async function rotateSelected() {
+    if (!selectedPage) return;
+    setProcessing(true);
+    setStatus("Rotating page…");
+    setError("");
+    try {
+      const rotated = await rotateImage(selectedPage.working, 90);
+      setPages((current) => current.map((page) => page.id === selectedPage.id
+        ? {
+          ...page,
+          working: rotated.blob,
+          image: rotated.blob,
+          width: rotated.width,
+          height: rotated.height,
+          sourceWidth: rotated.width,
+          sourceHeight: rotated.height,
+          corners: null,
+        }
+        : page));
+      setCropEditing(false);
+      setCompareSide("after");
+      setStatus("");
+      notify("Page rotated.");
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Couldn't rotate this page.";
+      setError(message);
+      setStatus("");
       notify(message, "error");
     } finally {
       setProcessing(false);
@@ -380,6 +404,7 @@ export default function CamScanner({ notify }) {
     const updated = pages.filter((page) => page.id !== id);
     setPages(updated);
     if (selectedId === id) setSelectedId(updated[Math.min(index, updated.length - 1)]?.id ?? null);
+    setCropEditing(false);
   }
 
   async function createPdf() {
@@ -391,17 +416,13 @@ export default function CamScanner({ notify }) {
     try {
       const pdf = await PDFDocument.create();
       for (let index = 0; index < pages.length; index += 1) {
-        const image = await imageFromBlob(pages[index].image);
-        try {
-          const embedded = await pdf.embedJpg(await pages[index].image.arrayBuffer());
-          const ratio = Math.min(612 / image.width, 792 / image.height);
-          const width = image.width * ratio;
-          const height = image.height * ratio;
-          const page = pdf.addPage([width, height]);
-          page.drawImage(embedded, { x: 0, y: 0, width, height });
-        } finally {
-          image.close?.();
-        }
+        const pageData = pages[index];
+        const embedded = await pdf.embedJpg(await pageData.image.arrayBuffer());
+        const ratio = Math.min(612 / pageData.width, 792 / pageData.height);
+        const width = pageData.width * ratio;
+        const height = pageData.height * ratio;
+        const page = pdf.addPage([width, height]);
+        page.drawImage(embedded, { x: 0, y: 0, width, height });
         setProgress(((index + 1) / pages.length) * 100);
       }
       downloadBlob(new Blob([await pdf.save({ useObjectStreams: true })], { type: "application/pdf" }), "fileease-scan.pdf");
@@ -417,7 +438,17 @@ export default function CamScanner({ notify }) {
     }
   }
 
-  const currentPreview = previews[pages.findIndex((page) => page.id === selectedId)];
+  const selectedIndex = pages.findIndex((page) => page.id === selectedId);
+  const selectedPreview = previews[selectedIndex];
+  const previewUrl = cropEditing ? selectedPreview?.working : compareSide === "before" ? selectedPreview?.original : selectedPreview?.image;
+  const previewWidth = cropEditing
+    ? selectedPage?.sourceWidth
+    : compareSide === "before" ? selectedPage?.originalWidth : selectedPage?.width;
+  const previewHeight = cropEditing
+    ? selectedPage?.sourceHeight
+    : compareSide === "before" ? selectedPage?.originalHeight : selectedPage?.height;
+  const cropPath = selectedPage?.corners?.map((point, index) =>
+    `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ") + " Z";
   const canUseCamera = Boolean(navigator.mediaDevices?.getUserMedia);
 
   return (
@@ -425,7 +456,7 @@ export default function CamScanner({ notify }) {
       <div className="tool-heading">
         <span className="page-kicker"><ScanLine size={14} /> DOCUMENT TOOL</span>
         <h1>Cam Scanner</h1>
-        <p>Scan paper documents, enhance each page, and save a clear PDF without sending files anywhere.</p>
+        <p>Scan paper documents, flatten page perspective, enhance the image, and save a clear PDF on your device.</p>
       </div>
 
       {!pages.length && !cameraEnabled && (
@@ -436,7 +467,6 @@ export default function CamScanner({ notify }) {
           <div className="scanner-start-actions">
             <button className="btn btn-primary" onClick={() => openCamera()}><Camera size={16} /> Open camera</button>
             <button className="btn btn-outline-primary" onClick={() => uploadInputRef.current?.click()}><ImagePlus size={16} /> Upload images</button>
-            <input ref={uploadInputRef} className="visually-hidden" type="file" accept="image/*" multiple onChange={(event) => { addImages(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
           </div>
           {!canUseCamera && <p className="scanner-secure-hint">Camera access requires HTTPS or localhost. You can upload images instead.</p>}
         </div>
@@ -452,117 +482,170 @@ export default function CamScanner({ notify }) {
             <video ref={videoRef} autoPlay playsInline muted aria-label="Live camera preview" />
             {!cameraReady && !cameraError && <div className="scanner-camera-placeholder"><span className="scanner-spinner" />Opening camera…</div>}
             {cameraError && <div className="scanner-camera-error"><Camera size={24} /><strong>Camera unavailable</strong><span>{cameraError}</span></div>}
-            {cameraReady && <div className="scanner-frame-corner corner-tl" />}
-            {cameraReady && <div className="scanner-frame-corner corner-tr" />}
-            {cameraReady && <div className="scanner-frame-corner corner-bl" />}
-            {cameraReady && <div className="scanner-frame-corner corner-br" />}
+            {cameraReady && <><div className="scanner-frame-corner corner-tl" /><div className="scanner-frame-corner corner-tr" /><div className="scanner-frame-corner corner-bl" /><div className="scanner-frame-corner corner-br" /></>}
           </div>
-          {cameraError && (
-            <div className="scanner-upload-fallback">
-              <UploadZone compact accept="image/*" multiple onFiles={addImages} title="Use a document photo instead" description="Drop images here or browse your device" />
-            </div>
-          )}
+          {cameraError && <div className="scanner-upload-fallback"><UploadZone compact accept="image/*" multiple onFiles={addImages} title="Use a document photo instead" description="Drop images here or browse your device" /></div>}
           <div className="scanner-camera-actions">
             <button className="btn btn-outline-primary" onClick={() => uploadInputRef.current?.click()}><ImagePlus size={16} /> Upload image</button>
-            <input ref={uploadInputRef} className="visually-hidden" type="file" accept="image/*" multiple onChange={(event) => { addImages(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
             <button className="btn btn-primary scanner-capture-button" disabled={!cameraReady || processing} onClick={capturePage}><Camera size={18} /> Capture</button>
           </div>
         </section>
       )}
 
       {pages.length > 0 && !cameraEnabled && (
-        <div className="scanner-workspace">
-          <section className="workspace-card scanner-editor">
-            <div className="section-heading">
-              <div><h2>Scanned pages <span className="count-badge">{pages.length}</span></h2><p>Drag thumbnails to reorder. Select a page to edit.</p></div>
-              <button className="btn btn-light subtle-button" disabled={processing} onClick={() => openCamera()}><FilePlus2 size={15} /> Add page</button>
-            </div>
-            <div className="scanner-preview">
-              {currentPreview
-                ? <img src={currentPreview} alt={`Scanned page ${pages.findIndex((page) => page.id === selectedId) + 1}`} />
-                : <div className="scanner-empty-preview"><FileImage size={28} /><span>Select a page to preview</span></div>}
-            </div>
-            {selectedPage && (
+        <section className="workspace-card scanner-editor">
+          <div className="section-heading">
+            <div><h2>Scanned pages <span className="count-badge">{pages.length}</span></h2><p>Drag thumbnails to reorder. Select a page to edit.</p></div>
+            <button className="btn btn-light subtle-button" disabled={processing} onClick={() => openCamera()}><FilePlus2 size={15} /> Add page</button>
+          </div>
+
+          {selectedPage && (
+            <>
+              {!cropEditing && selectedPreview && (
+                <div className="scanner-compare-tabs" role="group" aria-label="Compare original and processed page">
+                  <button className={compareSide === "before" ? "active" : ""} onClick={() => setCompareSide("before")}><span>Before</span> Original</button>
+                  <button className={compareSide === "after" ? "active" : ""} onClick={() => setCompareSide("after")}><span>After</span> Scanned</button>
+                </div>
+              )}
+              <div className={`scanner-preview ${cropEditing ? "scanner-preview-editing" : ""}`}>
+                {previewUrl && (
+                  <div
+                    className="scanner-image-wrap"
+                    style={{
+                      aspectRatio: `${previewWidth} / ${previewHeight}`,
+                      width: `min(100%, ${Math.min(780, 500 * previewWidth / previewHeight)}px)`,
+                    }}
+                  >
+                    <img src={previewUrl} alt={cropEditing ? "Adjust the document crop corners" : `Page ${selectedIndex + 1} ${compareSide === "before" ? "original" : "processed"}`} />
+                    {cropEditing && selectedPage.corners && (
+                      <svg
+                        ref={cropSvgRef}
+                        className="scanner-crop-overlay"
+                        viewBox={`0 0 ${selectedPage.sourceWidth} ${selectedPage.sourceHeight}`}
+                        onPointerMove={updateCorner}
+                        onPointerUp={() => setActiveCorner(null)}
+                        onPointerCancel={() => setActiveCorner(null)}
+                      >
+                        <defs>
+                          <mask id="scanner-crop-mask">
+                            <rect width={selectedPage.sourceWidth} height={selectedPage.sourceHeight} fill="white" />
+                            <path d={cropPath} fill="black" />
+                          </mask>
+                        </defs>
+                        <rect width={selectedPage.sourceWidth} height={selectedPage.sourceHeight} fill="rgba(12,16,26,.55)" mask="url(#scanner-crop-mask)" />
+                        <path d={cropPath} className="scanner-crop-outline" />
+                        {selectedPage.corners.map((point, index) => (
+                          <circle
+                            key={`crop-corner-${index}`}
+                            cx={point.x}
+                            cy={point.y}
+                            r={Math.max(selectedPage.sourceWidth, selectedPage.sourceHeight) * 0.018}
+                            className="scanner-crop-handle"
+                            onPointerDown={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              event.currentTarget.ownerSVGElement?.setPointerCapture(event.pointerId);
+                              setActiveCorner(index);
+                            }}
+                          />
+                        ))}
+                      </svg>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <div className="scanner-page-meta">
-                <span>Page {pages.findIndex((page) => page.id === selectedId) + 1} · {formatBytes(selectedPage.image.size)}</span>
+                <span>{cropEditing ? "Drag the four handles to the page corners." : `Page ${selectedIndex + 1} · ${formatBytes(selectedPage.image.size)}`}</span>
                 <div className="scanner-page-actions">
-                  <button type="button" onClick={() => downloadBlob(selectedPage.image, `fileease-page-${pages.findIndex((page) => page.id === selectedId) + 1}.jpg`)}><Download size={14} /> Download image</button>
+                  <button type="button" onClick={() => downloadBlob(selectedPage.image, `fileease-page-${selectedIndex + 1}.jpg`)}><Download size={14} /> Download image</button>
                   <button type="button" onClick={() => openCamera(selectedPage.id)}><Camera size={14} /> Retake</button>
                   <button type="button" className="scanner-delete-action" onClick={() => deletePage(selectedPage.id)}><Trash2 size={14} /> Delete</button>
                 </div>
               </div>
-            )}
 
-            <div className="scanner-settings">
-              <div className="scanner-settings-title"><SlidersHorizontal size={15} /><strong>Enhance selected page</strong></div>
-              <div className="scanner-control-grid">
-                <label className="scanner-field" htmlFor="scanner-mode"><span>Color mode</span>
-                  <select id="scanner-mode" className="form-select" value={settings.mode} onChange={(event) => setSettings((current) => ({ ...current, mode: event.target.value }))}>
-                    <option value="color">Color</option><option value="gray">Grayscale</option><option value="bw">Black &amp; white</option>
-                  </select>
-                </label>
-                {[
-                  ["brightness", "Brightness"],
-                  ["contrast", "Contrast"],
-                  ["sharpness", "Sharpness"],
-                ].map(([key, label]) => (
-                  <label className="scanner-field" htmlFor={`scanner-${key}`} key={key}>
-                    <span>{label} <strong>{settings[key]}{key === "sharpness" ? "" : "%"}</strong></span>
-                    <input id={`scanner-${key}`} className="form-range" type="range" min={key === "sharpness" ? "0" : "50"} max={key === "sharpness" ? "100" : "160"} value={settings[key]} onChange={(event) => setSettings((current) => ({ ...current, [key]: Number(event.target.value) }))} />
-                  </label>
-                ))}
-              </div>
-              <div className="scanner-edit-actions">
-                <button className={`btn ${settings.autoCrop ? "btn-primary" : "btn-outline-primary"}`} type="button" onClick={() => setSettings((current) => ({ ...current, autoCrop: !current.autoCrop }))}><ScanLine size={15} /> Auto crop {settings.autoCrop ? "on" : "off"}</button>
-                <button className="btn btn-outline-primary" type="button" onClick={() => setSettings((current) => ({ ...current, rotation: (current.rotation + 90) % 360 }))}><RotateCw size={15} /> Rotate 90°</button>
-                <button className="btn btn-primary" type="button" disabled={processing || !selectedPage} onClick={enhanceSelected}><WandSparkles size={15} /> Enhance</button>
-              </div>
-              <p className="scanner-hint">Auto crop trims margins with a contrasting background. Automatic perspective correction isn't available; check page alignment before capture.</p>
-            </div>
-
-            {processing && <ProgressBar value={progress || 60} label={status || "Processing page…"} />}
-            {error && <div className="inline-error" role="alert">{error}</div>}
-
-            <div className="scanner-thumbnails" aria-label="Scanned page thumbnails">
-              {pages.map((page, index) => (
-                <div
-                  className={`scanner-thumbnail ${selectedId === page.id ? "selected" : ""} ${draggedId === page.id ? "dragging" : ""}`}
-                  key={page.id}
-                  draggable={!processing}
-                  onDragStart={(event) => {
-                    setDraggedId(page.id);
-                    event.dataTransfer.effectAllowed = "move";
-                    event.dataTransfer.setData("text/plain", page.id);
-                  }}
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    movePage(event.dataTransfer.getData("text/plain") || draggedId, page.id);
-                    setDraggedId(null);
-                  }}
-                  onDragEnd={() => setDraggedId(null)}
-                >
-                  <button className="scanner-thumbnail-select" type="button" onClick={() => setSelectedId(page.id)} aria-label={`Select page ${index + 1}`}>
-                    <img src={previews[index]} alt="" />
-                    <span>Page {index + 1}</span>
-                  </button>
-                  <div className="scanner-thumbnail-order">
-                    <button type="button" disabled={index === 0} onClick={() => movePageBy(index, -1)} aria-label={`Move page ${index + 1} earlier`}><MoveLeft size={12} /></button>
-                    <button type="button" disabled={index === pages.length - 1} onClick={() => movePageBy(index, 1)} aria-label={`Move page ${index + 1} later`}><MoveRight size={12} /></button>
-                  </div>
-                  <button className="scanner-thumbnail-delete" type="button" onClick={() => deletePage(page.id)} aria-label={`Delete page ${index + 1}`}><X size={13} /></button>
+              {cropEditing ? (
+                <div className="scanner-crop-actions">
+                  <p>Move each handle to the document's corners in clockwise order.</p>
+                  <button className="btn btn-outline-primary" disabled={processing} onClick={autoCropSelected}><ScanLine size={15} /> Detect again</button>
+                  <button className="btn btn-outline-primary" disabled={processing} onClick={() => setCropEditing(false)}>Cancel</button>
+                  <button className="btn btn-primary" disabled={processing} onClick={applyManualCrop}><Check size={15} /> Apply crop</button>
                 </div>
-              ))}
-            </div>
-            <div className="scanner-bottom-actions">
-              <button className="btn btn-outline-primary" type="button" disabled={processing} onClick={() => uploadInputRef.current?.click()}><ImagePlus size={15} /> Add images</button>
-              <input ref={uploadInputRef} className="visually-hidden" type="file" accept="image/*" multiple onChange={(event) => { addImages(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
-              <button className="btn btn-primary" type="button" disabled={processing || !pages.length} onClick={createPdf}><FilePlus2 size={16} /> Create PDF</button>
-            </div>
-          </section>
-        </div>
+              ) : (
+                <>
+                  <div className="scanner-settings">
+                    <div className="scanner-settings-title"><SlidersHorizontal size={15} /><strong>Document enhancement</strong></div>
+                    <div className="scanner-mode-grid" role="group" aria-label="Enhancement mode">
+                      {[
+                        ["original", "Original", "Keep the image unchanged"],
+                        ["bw", "Black & white (strong)", "Clean binary document scan"],
+                        ["gray", "Grayscale", "Balanced monochrome"],
+                        ["enhanced", "Enhanced color", "Remove shadows and sharpen"],
+                      ].map(([value, label, description]) => (
+                        <button type="button" key={value} className={`scanner-mode-option ${mode === value ? "selected" : ""}`} onClick={() => setMode(value)}>
+                          <span className="scanner-mode-radio" />
+                          <span><strong>{label}</strong><small>{description}</small></span>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="scanner-edit-actions">
+                      <button className="btn btn-outline-primary" disabled={processing} onClick={autoCropSelected}><ScanLine size={15} /> Auto Crop</button>
+                      <button className="btn btn-outline-primary" disabled={processing} onClick={editCorners}><ScanLine size={15} /> Adjust corners</button>
+                      <button className="btn btn-outline-primary" disabled={processing} onClick={rotateSelected}><RotateCw size={15} /> Rotate</button>
+                      <button className="btn btn-primary" disabled={processing} onClick={enhanceSelected}>
+                        {mode === "original" ? <><Check size={15} /> Restore original</> : <><WandSparkles size={15} /> Enhance</>}
+                      </button>
+                    </div>
+                    <p className="scanner-hint">Enhancement uses local canvas processing with shadow normalization, adaptive thresholding for black &amp; white, and edge sharpening.</p>
+                  </div>
+                </>
+              )}
+            </>
+          )}
+
+          {processing && <ProgressBar value={progress || 60} label={status || "Processing page…"} />}
+          {error && <div className="inline-error" role="alert">{error}</div>}
+
+          <div className="scanner-thumbnails" aria-label="Scanned page thumbnails">
+            {pages.map((page, index) => (
+              <div
+                className={`scanner-thumbnail ${selectedId === page.id ? "selected" : ""} ${draggedId === page.id ? "dragging" : ""}`}
+                key={page.id}
+                draggable={!processing}
+                onDragStart={(event) => {
+                  setDraggedId(page.id);
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData("text/plain", page.id);
+                }}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  movePage(event.dataTransfer.getData("text/plain") || draggedId, page.id);
+                  setDraggedId(null);
+                }}
+                onDragEnd={() => setDraggedId(null)}
+              >
+                <button className="scanner-thumbnail-select" type="button" onClick={() => { setSelectedId(page.id); setCropEditing(false); setCompareSide("after"); }} aria-label={`Select page ${index + 1}`}>
+                  <img src={previews[index].image} alt="" />
+                  <span>Page {index + 1}</span>
+                </button>
+                <div className="scanner-thumbnail-order">
+                  <button type="button" disabled={index === 0} onClick={() => movePageBy(index, -1)} aria-label={`Move page ${index + 1} earlier`}><MoveLeft size={12} /></button>
+                  <button type="button" disabled={index === pages.length - 1} onClick={() => movePageBy(index, 1)} aria-label={`Move page ${index + 1} later`}><MoveRight size={12} /></button>
+                </div>
+                <button className="scanner-thumbnail-delete" type="button" onClick={() => deletePage(page.id)} aria-label={`Delete page ${index + 1}`}><X size={13} /></button>
+              </div>
+            ))}
+          </div>
+
+          <div className="scanner-bottom-actions">
+            <button className="btn btn-outline-primary" type="button" disabled={processing} onClick={() => uploadInputRef.current?.click()}><ImagePlus size={15} /> Add images</button>
+            <button className="btn btn-primary" type="button" disabled={processing || !pages.length} onClick={createPdf}><FilePlus2 size={16} /> Create PDF</button>
+          </div>
+        </section>
       )}
 
+      <input ref={uploadInputRef} className="visually-hidden" type="file" accept="image/*" multiple onChange={(event) => { addImages(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
       <div className="scanner-privacy-note"><span><Check size={14} /></span><strong>Camera is only used on your device. No image is uploaded.</strong></div>
       <div className="scanner-processing-status" aria-live="polite">{processing && <><span className="scanner-spinner" />{status || "Processing…"}</>}</div>
     </div>
