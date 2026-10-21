@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { ArrowRight, ArrowUpRight, Check, FileCheck2, LockKeyhole, Zap } from "lucide-react";
+import { Analytics } from "@vercel/analytics/react";
 import Navbar from "./components/Navbar.jsx";
 import Sidebar, { tools } from "./components/Sidebar.jsx";
 import ToolCard from "./components/ToolCard.jsx";
@@ -131,6 +132,7 @@ export default function App() {
         </Suspense>
       </main>
       <Toast toast={toast} onClose={() => setToast(null)} />
+      <Analytics />
     </div>
   );
 }
