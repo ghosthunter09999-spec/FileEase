@@ -4,12 +4,12 @@ FileEase is a private, browser-only toolkit for common image and PDF tasks. File
 
 ## Features
 
-- Compress JPG, PNG, and WebP images with adjustable quality and a before/after size comparison.
+- Batch-compress JPG, PNG, and WebP images with shared quality settings, selected-image previews, and ZIP downloads.
 - Combine and reorder JPG/PNG images into a PDF.
 - Compress PDFs by rendering pages into optimized images. This can significantly reduce file size, but text selection, forms, and vector content are not retained.
 - Convert PDF pages into PNG/JPG images and download them as a ZIP.
 - Create a paginated PDF from text or a `.txt` file.
-- Scan, auto-crop and perspective-flatten document photos, clean stains and dark edges, extract English or Urdu text with OCR, reorder pages, and export a PDF.
+- Scan, auto-crop and perspective-flatten document photos, batch-apply shared cleaning and image quality settings, extract English or Urdu text with OCR, reorder pages, and export PDFs or image ZIPs.
 - Responsive interface with a persistent light/dark theme.
 
 ## Requirements

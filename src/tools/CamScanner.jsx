@@ -4,6 +4,7 @@ import {
   Check,
   Copy,
   Download,
+  FileArchive,
   FilePlus2,
   FileText,
   ImagePlus,
@@ -18,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { PDFDocument } from "pdf-lib";
+import JSZip from "jszip";
 import { createWorker } from "tesseract.js";
 import ProgressBar from "../components/ProgressBar.jsx";
 import UploadZone from "../components/UploadZone.jsx";
@@ -71,6 +73,11 @@ export default function CamScanner({ notify }) {
   const [activeCorner, setActiveCorner] = useState(null);
   const [compareSide, setCompareSide] = useState("after");
   const [mode, setMode] = useState("enhanced");
+  const [imageQuality, setImageQuality] = useState(96);
+  const [brightness, setBrightness] = useState(0);
+  const [contrast, setContrast] = useState(18);
+  const [livePreview, setLivePreview] = useState(null);
+  const [livePreviewProcessing, setLivePreviewProcessing] = useState(false);
   const [ocrLanguage, setOcrLanguage] = useState("eng");
   const [ocrProgress, setOcrProgress] = useState(null);
   const [ocrStatus, setOcrStatus] = useState("");
@@ -82,6 +89,7 @@ export default function CamScanner({ notify }) {
   const uploadInputRef = useRef(null);
   const cropSvgRef = useRef(null);
   const selectedPage = pages.find((page) => page.id === selectedId) ?? null;
+  const selectedOcrImage = livePreview ?? selectedPage?.image ?? null;
   const previews = useMemo(() => pages.map((page) => ({
     image: URL.createObjectURL(page.image),
     original: URL.createObjectURL(page.original),
@@ -93,6 +101,46 @@ export default function CamScanner({ notify }) {
     URL.revokeObjectURL(preview.original);
     URL.revokeObjectURL(preview.working);
   }), [previews]);
+
+  const livePreviewUrl = useMemo(
+    () => livePreview ? URL.createObjectURL(livePreview) : null,
+    [livePreview],
+  );
+
+  useEffect(() => () => {
+    if (livePreviewUrl) URL.revokeObjectURL(livePreviewUrl);
+  }, [livePreviewUrl]);
+
+  useEffect(() => {
+    if (!selectedPage) {
+      setLivePreview(null);
+      setLivePreviewProcessing(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setLivePreview(null);
+    setLivePreviewProcessing(true);
+    const timeout = window.setTimeout(async () => {
+      try {
+        const preview = mode === "original"
+          ? selectedPage.working
+          : await enhanceDocument(selectedPage.working, mode, { imageQuality, brightness, contrast });
+        if (!cancelled) {
+          setLivePreview(preview);
+          setLivePreviewProcessing(false);
+        }
+      } catch (cause) {
+        if (cancelled) return;
+        const message = cause instanceof Error ? cause.message : "Couldn't update the live page preview.";
+        setError(message);
+        setLivePreviewProcessing(false);
+      }
+    }, 180);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [selectedPage?.id, selectedPage?.working, mode, imageQuality, brightness, contrast]);
 
   useEffect(() => {
     if (!cameraEnabled) {
@@ -231,46 +279,69 @@ export default function CamScanner({ notify }) {
   }
 
   async function autoCropSelected() {
-    if (!selectedPage) return;
+    if (!pages.length) return;
     setProcessing(true);
-    setStatus("Detecting document edges…");
+    setProgress(0);
+    setStatus("Auto-cropping pages…");
     setError("");
+    setCropEditing(false);
+    const failures = [];
+    let selectedNeedsManualCrop = false;
     try {
-      const corners = await detectDocumentCorners(selectedPage.working);
-      if (!corners) {
-        setPages((current) => current.map((page) => page.id === selectedPage.id
-          ? { ...page, corners: DEFAULT_CORNERS(page.sourceWidth, page.sourceHeight) }
+      for (let index = 0; index < pages.length; index += 1) {
+        const page = pages[index];
+        setStatus(`Detecting page edges ${index + 1} of ${pages.length}…`);
+        try {
+          const corners = await detectDocumentCorners(page.working);
+          if (!corners) {
+            if (page.id === selectedId) selectedNeedsManualCrop = true;
+          } else {
+            const cropped = await perspectiveCrop(page.working, corners);
+            setPages((current) => current.map((item) => item.id === page.id
+              ? {
+                ...item,
+                working: cropped.blob,
+                image: cropped.blob,
+                width: cropped.width,
+                height: cropped.height,
+                sourceWidth: cropped.width,
+                sourceHeight: cropped.height,
+                corners: null,
+              }
+              : item));
+          }
+        } catch (cause) {
+          failures.push(`Page ${index + 1}: ${cause instanceof Error ? cause.message : "Crop failed."}`);
+        }
+        setProgress(((index + 1) / pages.length) * 100);
+      }
+      if (selectedNeedsManualCrop) {
+        setPages((current) => current.map((page) => page.id === selectedId
+          ? { ...page, corners: page.corners ?? DEFAULT_CORNERS(page.sourceWidth, page.sourceHeight) }
           : page));
         setCropEditing(true);
         setCompareSide("before");
-        setStatus("");
-        notify("Couldn't confidently detect all page edges. Adjust the four corners, then apply the crop.");
-        return;
+      } else {
+        setCompareSide("after");
       }
-      const cropped = await perspectiveCrop(selectedPage.working, corners);
-      setPages((current) => current.map((page) => page.id === selectedPage.id
-        ? {
-          ...page,
-          working: cropped.blob,
-          image: cropped.blob,
-          width: cropped.width,
-          height: cropped.height,
-          sourceWidth: cropped.width,
-          sourceHeight: cropped.height,
-          corners: null,
-        }
-        : page));
-      setCropEditing(false);
-      setCompareSide("after");
       setStatus("");
-      notify("Document detected, cropped, and perspective-corrected.");
+      if (failures.length) {
+        const message = failures.join(" ");
+        setError(message);
+        notify(`Auto-cropped pages where edges were detected. ${message}`, "error");
+      } else if (selectedNeedsManualCrop) {
+        notify("Auto-crop was applied to detected pages. Adjust the selected page's crop handles manually.");
+      } else {
+        notify("Auto-crop applied to all pages with detected document edges.");
+      }
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "Couldn't crop this document.";
+      const message = cause instanceof Error ? cause.message : "Couldn't auto-crop these pages.";
       setError(message);
       setStatus("");
       notify(message, "error");
     } finally {
       setProcessing(false);
+      setProgress(0);
     }
   }
 
@@ -341,7 +412,7 @@ export default function CamScanner({ notify }) {
     setStatus(mode === "bw" ? "Applying clean black & white scan…" : mode === "clean" ? "Cleaning stains and softening dark edges…" : "Removing shadows and enhancing page…");
     setError("");
     try {
-      const enhanced = await enhanceDocument(selectedPage.working, mode);
+      const enhanced = await enhanceDocument(selectedPage.working, mode, { imageQuality, brightness, contrast });
       setPages((current) => current.map((page) => page.id === selectedPage.id ? { ...page, image: enhanced } : page));
       setCropEditing(false);
       setCompareSide("after");
@@ -357,8 +428,48 @@ export default function CamScanner({ notify }) {
     }
   }
 
+  async function enhanceAll() {
+    if (!pages.length) return;
+    if (mode === "original") {
+      setPages((current) => current.map((page) => ({ ...page, image: page.working })));
+      setCompareSide("after");
+      notify("Original scans restored for all pages.");
+      return;
+    }
+    setProcessing(true);
+    setProgress(0);
+    setStatus("Applying shared enhancement settings…");
+    setError("");
+    const failures = [];
+    try {
+      for (let index = 0; index < pages.length; index += 1) {
+        const page = pages[index];
+        setStatus(`Enhancing page ${index + 1} of ${pages.length}…`);
+        try {
+          const enhanced = await enhanceDocument(page.working, mode, { imageQuality, brightness, contrast });
+          setPages((current) => current.map((item) => item.id === page.id ? { ...item, image: enhanced } : item));
+        } catch (cause) {
+          failures.push(`Page ${index + 1}: ${cause instanceof Error ? cause.message : "Enhancement failed."}`);
+        }
+        setProgress(((index + 1) / pages.length) * 100);
+      }
+      setCompareSide("after");
+      if (failures.length) {
+        const message = failures.join(" ");
+        setError(message);
+        notify(`Enhanced pages where processing succeeded. ${message}`, "error");
+      } else {
+        notify(`Applied shared enhancement settings to all ${pages.length} pages.`);
+      }
+    } finally {
+      setProcessing(false);
+      setStatus("");
+      setProgress(0);
+    }
+  }
+
   async function extractText() {
-    if (!selectedPage || processing || ocrProgress !== null) return;
+    if (!selectedPage || !selectedOcrImage || processing || livePreviewProcessing || ocrProgress !== null) return;
     setOcrProgress(0);
     setOcrStatus("Preparing text recognition…");
     setOcrError("");
@@ -372,10 +483,10 @@ export default function CamScanner({ notify }) {
           if (Number.isFinite(workerProgress)) setOcrProgress(Math.round(workerProgress * 100));
         },
       });
-      const { data } = await worker.recognize(selectedPage.image);
+      const { data } = await worker.recognize(selectedOcrImage);
       const text = data.text.trim();
       setOcrText(text);
-      setOcrSource(selectedPage.image);
+      setOcrSource(selectedOcrImage);
       if (text) notify("Text extracted successfully.");
       else notify("OCR finished, but no text was detected.", "error");
     } catch (cause) {
@@ -398,7 +509,7 @@ export default function CamScanner({ notify }) {
   }
 
   async function copyExtractedText() {
-    if (!ocrText || ocrSource !== selectedPage?.image) return;
+    if (!ocrText || ocrSource !== selectedOcrImage) return;
     try {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(ocrText);
@@ -423,7 +534,7 @@ export default function CamScanner({ notify }) {
   }
 
   function downloadExtractedText() {
-    if (!ocrText || ocrSource !== selectedPage?.image) return;
+    if (!ocrText || ocrSource !== selectedOcrImage) return;
     const filename = `fileease-page-${selectedIndex + 1}-text.txt`;
     downloadBlob(new Blob([`\uFEFF${ocrText}`], { type: "text/plain;charset=utf-8" }), filename);
     notify("Extracted text downloaded.");
@@ -489,6 +600,32 @@ export default function CamScanner({ notify }) {
     setCropEditing(false);
   }
 
+  async function downloadAllImages() {
+    if (!pages.length || processing) return;
+    setProcessing(true);
+    setProgress(0);
+    setStatus("Adding scanned pages to ZIP…");
+    setError("");
+    try {
+      const zip = new JSZip();
+      pages.forEach((page, index) => zip.file(`page-${String(index + 1).padStart(3, "0")}.jpg`, page.image));
+      const archive = await zip.generateAsync({ type: "blob" }, (metadata) => {
+        setProgress(metadata.percent);
+        setStatus("Creating ZIP archive…");
+      });
+      downloadBlob(archive, "fileease-scanned-pages.zip");
+      notify(`Downloaded ${pages.length} scanned page${pages.length === 1 ? "" : "s"} as a ZIP.`);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Couldn't create a ZIP of scanned pages.";
+      setError(message);
+      notify(message, "error");
+    } finally {
+      setProcessing(false);
+      setStatus("");
+      setProgress(0);
+    }
+  }
+
   async function createPdf() {
     if (!pages.length) return;
     setProcessing(true);
@@ -522,7 +659,9 @@ export default function CamScanner({ notify }) {
 
   const selectedIndex = pages.findIndex((page) => page.id === selectedId);
   const selectedPreview = previews[selectedIndex];
-  const previewUrl = cropEditing ? selectedPreview?.working : compareSide === "before" ? selectedPreview?.original : selectedPreview?.image;
+  const previewUrl = cropEditing
+    ? selectedPreview?.working
+    : compareSide === "before" ? selectedPreview?.original : livePreviewUrl ?? selectedPreview?.image;
   const previewWidth = cropEditing
     ? selectedPage?.sourceWidth
     : compareSide === "before" ? selectedPage?.originalWidth : selectedPage?.width;
@@ -586,9 +725,10 @@ export default function CamScanner({ notify }) {
               {!cropEditing && selectedPreview && (
                 <div className="scanner-compare-tabs" role="group" aria-label="Compare original and processed page">
                   <button className={compareSide === "before" ? "active" : ""} onClick={() => setCompareSide("before")}><span>Before</span> Original</button>
-                  <button className={compareSide === "after" ? "active" : ""} onClick={() => setCompareSide("after")}><span>After</span> Scanned</button>
+                  <button className={compareSide === "after" ? "active" : ""} onClick={() => setCompareSide("after")}><span>After</span> Live preview</button>
                 </div>
               )}
+              {livePreviewProcessing && !cropEditing && <div className="scanner-live-preview-status"><span className="scanner-spinner" /> Updating preview with shared settings…</div>}
               <div className={`scanner-preview ${cropEditing ? "scanner-preview-editing" : ""}`}>
                 {previewUrl && (
                   <div
@@ -657,6 +797,7 @@ export default function CamScanner({ notify }) {
                 <>
                   <div className="scanner-settings">
                     <div className="scanner-settings-title"><SlidersHorizontal size={15} /><strong>Document enhancement</strong></div>
+                    <p className="scanner-batch-banner"><WandSparkles size={14} /> Shared settings apply to all pages when you choose <strong>Apply to all pages</strong>.</p>
                     <div className="scanner-mode-grid" role="group" aria-label="Enhancement mode">
                       {[
                         ["original", "Original", "Keep the image unchanged"],
@@ -671,10 +812,28 @@ export default function CamScanner({ notify }) {
                         </button>
                       ))}
                     </div>
+                    <div className="scanner-control-grid scanner-batch-controls">
+                      <label className="scanner-field" htmlFor="scanner-quality">
+                        <span>Image quality <strong>{imageQuality}% · all pages</strong></span>
+                        <input id="scanner-quality" className="form-range" type="range" min="70" max="100" value={imageQuality}
+                          disabled={processing} onChange={(event) => setImageQuality(Number(event.target.value))} />
+                      </label>
+                      <label className="scanner-field" htmlFor="scanner-brightness">
+                        <span>Brightness <strong>{brightness > 0 ? "+" : ""}{brightness} · all pages</strong></span>
+                        <input id="scanner-brightness" className="form-range" type="range" min="-30" max="30" value={brightness}
+                          disabled={processing} onChange={(event) => setBrightness(Number(event.target.value))} />
+                      </label>
+                      <label className="scanner-field" htmlFor="scanner-contrast">
+                        <span>Contrast <strong>{contrast} · all pages</strong></span>
+                        <input id="scanner-contrast" className="form-range" type="range" min="0" max="50" value={contrast}
+                          disabled={processing} onChange={(event) => setContrast(Number(event.target.value))} />
+                      </label>
+                    </div>
                     <div className="scanner-edit-actions">
-                      <button className="btn btn-outline-primary" disabled={processing} onClick={autoCropSelected}><ScanLine size={15} /> Auto Crop</button>
+                      <button className="btn btn-outline-primary" disabled={processing} onClick={autoCropSelected}><ScanLine size={15} /> Auto Crop All</button>
                       <button className="btn btn-outline-primary" disabled={processing} onClick={editCorners}><ScanLine size={15} /> Adjust corners</button>
                       <button className="btn btn-outline-primary" disabled={processing} onClick={rotateSelected}><RotateCw size={15} /> Rotate</button>
+                      <button className="btn btn-outline-primary" disabled={processing} onClick={enhanceAll}><WandSparkles size={15} /> Apply to all pages</button>
                       <button className="btn btn-primary" disabled={processing} onClick={enhanceSelected}>
                         {mode === "original"
                           ? <><Check size={15} /> Restore original</>
@@ -705,13 +864,13 @@ export default function CamScanner({ notify }) {
                         <option value="eng+urd">English + Urdu</option>
                       </select>
                     </label>
-                    <button className="btn btn-primary" type="button" disabled={processing || ocrProgress !== null} onClick={extractText}>
+                    <button className="btn btn-primary" type="button" disabled={processing || livePreviewProcessing || ocrProgress !== null} onClick={extractText}>
                       <FileText size={15} /> {ocrProgress !== null ? "Extracting…" : "Extract Text"}
                     </button>
                   </div>
                   {ocrProgress !== null && <ProgressBar value={ocrProgress} label={ocrStatus || "Extracting text…"} />}
                   {ocrError && <div className="inline-error" role="alert">{ocrError}</div>}
-                  {ocrText && ocrSource === selectedPage.image && (
+                  {ocrText && ocrSource === selectedOcrImage && (
                     <div className="scanner-ocr-result">
                       <label htmlFor="scanner-ocr-text">Extracted text</label>
                       <textarea id="scanner-ocr-text" dir="auto" readOnly value={ocrText} />
@@ -726,7 +885,7 @@ export default function CamScanner({ notify }) {
             </>
           )}
 
-          {processing && <ProgressBar value={progress || 60} label={status || "Processing page…"} />}
+          {processing && <ProgressBar value={progress > 0 ? progress : 60} label={status || "Processing page…"} />}
           {error && <div className="inline-error" role="alert">{error}</div>}
 
           <div className="scanner-thumbnails" aria-label="Scanned page thumbnails">
@@ -763,6 +922,7 @@ export default function CamScanner({ notify }) {
 
           <div className="scanner-bottom-actions">
             <button className="btn btn-outline-primary" type="button" disabled={processing} onClick={() => uploadInputRef.current?.click()}><ImagePlus size={15} /> Add images</button>
+            <button className="btn btn-outline-primary" type="button" disabled={processing || !pages.length} onClick={downloadAllImages}><FileArchive size={15} /> Download all as ZIP</button>
             <button className="btn btn-primary" type="button" disabled={processing || !pages.length} onClick={createPdf}><FilePlus2 size={16} /> Create PDF</button>
           </div>
         </section>

@@ -360,7 +360,7 @@ function otsuThreshold(histogram, count) {
   return Math.max(90, Math.min(205, threshold));
 }
 
-export async function enhanceDocument(blob, mode) {
+export async function enhanceDocument(blob, mode, settings = {}) {
   const image = await decodeImage(blob);
   try {
     const canvas = document.createElement("canvas");
@@ -387,7 +387,12 @@ export async function enhanceDocument(blob, mode) {
     const histogram = new Uint32Array(256);
     const pixels = canvas.width * canvas.height;
     const localThresholds = mode === "bw" ? new Uint8Array(pixels) : null;
-    const contrast = mode === "clean" ? 1.18 : mode === "enhanced" ? 1.12 : 1;
+    const contrastAmount = Number.isFinite(settings.contrast)
+      ? settings.contrast
+      : mode === "clean" ? 18 : mode === "enhanced" ? 12 : 0;
+    const contrast = 1 + contrastAmount / 100;
+    const brightness = Number.isFinite(settings.brightness) ? settings.brightness : 0;
+    const quality = Number.isFinite(settings.imageQuality) ? settings.imageQuality / 100 : 0.98;
     const saturation = mode === "enhanced" ? 1.12 : mode === "clean" ? 1.04 : 1;
     for (let y = 0; y < canvas.height; y += 1) {
       const backdropY = (y / canvas.height) * (backdrop.height - 1);
@@ -411,9 +416,9 @@ export async function enhanceDocument(blob, mode) {
         if (localThresholds) {
           localThresholds[y * canvas.width + x] = Math.max(95, Math.min(205, backgroundLight * 0.64));
         }
-        const red = Math.max(0, Math.min(255, (data[target] * gain - 128) * contrast + 128));
-        const green = Math.max(0, Math.min(255, (data[target + 1] * gain - 128) * contrast + 128));
-        const blue = Math.max(0, Math.min(255, (data[target + 2] * gain - 128) * contrast + 128));
+        const red = Math.max(0, Math.min(255, (data[target] * gain + brightness - 128) * contrast + 128));
+        const green = Math.max(0, Math.min(255, (data[target + 1] * gain + brightness - 128) * contrast + 128));
+        const blue = Math.max(0, Math.min(255, (data[target + 2] * gain + brightness - 128) * contrast + 128));
         const luminance = Math.max(0, Math.min(255, red * 0.299 + green * 0.587 + blue * 0.114));
         histogram[Math.round(luminance)] += 1;
         if (mode === "gray" || mode === "bw") {
@@ -484,7 +489,7 @@ export async function enhanceDocument(blob, mode) {
       }
       context.putImageData(sharpened, 0, 0);
     }
-    return canvasToJpeg(canvas);
+    return canvasToJpeg(canvas, quality);
   } finally {
     image.close?.();
   }

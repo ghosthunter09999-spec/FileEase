@@ -43,9 +43,9 @@ const seoByTool = {
 };
 
 const toolCards = [
-  { id: "image-compressor", icon: Zap, eyebrow: "IMAGE TOOL", title: "Image compressor", description: "Shrink JPG, PNG, and WebP images with quality control.", color: "blue" },
+  { id: "image-compressor", icon: Zap, eyebrow: "IMAGE TOOL", title: "Image compressor", description: "Batch-compress JPG, PNG, and WebP images with shared settings.", color: "blue" },
   { id: "image-to-pdf", icon: FileCheck2, eyebrow: "IMAGE TOOL", title: "Images to PDF", description: "Combine and arrange images into one easy-to-share PDF.", color: "violet" },
-  { id: "cam-scanner", icon: LockKeyhole, eyebrow: "IMAGE TOOL", title: "Cam Scanner", description: "Clean scans, extract English or Urdu text, and export pages privately.", color: "blue" },
+  { id: "cam-scanner", icon: LockKeyhole, eyebrow: "IMAGE TOOL", title: "Cam Scanner", description: "Batch-clean scanned pages, extract text, and export privately.", color: "blue" },
   { id: "pdf-compressor", icon: LockKeyhole, eyebrow: "PDF TOOL", title: "PDF compressor", description: "Make PDFs smaller for sharing and storage.", color: "mint" },
   { id: "pdf-to-images", icon: ArrowUpRight, eyebrow: "PDF TOOL", title: "PDF to images", description: "Convert every page into images in a handy ZIP.", color: "amber" },
   { id: "text-to-pdf", icon: FileCheck2, eyebrow: "PDF TOOL", title: "Text to PDF", description: "Create a simple, paginated PDF from plain text.", color: "rose" },
