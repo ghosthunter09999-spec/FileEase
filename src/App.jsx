@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Analytics } from "@vercel/analytics/react";
-import { ArrowRight, ArrowUpRight, Check, FileCheck2, LockKeyhole, Zap } from "lucide-react";
+import { ArrowRight, Check, FileArchive, FileCheck2, FileImage, FileText, LockKeyhole, ScanLine, Shrink } from "lucide-react";
 import Navbar from "./components/Navbar.jsx";
 import Sidebar, { tools } from "./components/Sidebar.jsx";
 import ToolCard from "./components/ToolCard.jsx";
@@ -9,7 +9,7 @@ const ImageCompressor = lazy(() => import("./tools/ImageCompressor.jsx"));
 const ImageToPdf = lazy(() => import("./tools/ImageToPdf.jsx"));
 const PdfCompressor = lazy(() => import("./tools/PdfCompressor.jsx"));
 const PdfToImages = lazy(() => import("./tools/PdfToImages.jsx"));
-const TextToPdf = lazy(() => import("./tools/TextToPdf.jsx"));
+const DocumentToPdf = lazy(() => import("./tools/DocumentToPdf.jsx"));
 const CamScanner = lazy(() => import("./tools/CamScanner.jsx"));
 
 const seoByTool = {
@@ -27,7 +27,7 @@ const seoByTool = {
   },
   "cam-scanner": {
     title: "Cam Scanner — Scan Documents to PDF Privately | FileEase",
-    description: "Scan and clean document images, extract English or Urdu text with OCR, and create a PDF on your device. No image is uploaded.",
+    description: "Scan, crop, clean, and export document photos as PDFs privately in your browser.",
   },
   "pdf-compressor": {
     title: "Free PDF Compressor — Reduce PDF File Size | FileEase",
@@ -37,19 +37,19 @@ const seoByTool = {
     title: "PDF to JPG & PNG Converter — Download ZIP | FileEase",
     description: "Convert PDF pages to PNG or JPG images and download them as a ZIP. Fast, free, and processed privately in your browser.",
   },
-  "text-to-pdf": {
-    title: "Text to PDF Converter — Create a PDF from TXT | FileEase",
-    description: "Convert plain text or .txt files into paginated PDF documents for free. Create and download PDFs right in your browser.",
+  "document-to-pdf": {
+    title: "Document to PDF Converter — Convert DOCX & TXT | FileEase",
+    description: "Convert Word DOCX and plain text documents to clean PDFs for free, right in your browser.",
   },
 };
 
 const toolCards = [
-  { id: "image-compressor", icon: Zap, eyebrow: "IMAGE TOOL", title: "Image compressor", description: "Batch-compress JPG, PNG, and WebP images with shared settings.", color: "blue" },
+  { id: "image-compressor", icon: Shrink, eyebrow: "IMAGE TOOL", title: "Image compressor", description: "Batch-compress JPG, PNG, and WebP images with a clear quality preview.", color: "blue" },
   { id: "image-to-pdf", icon: FileCheck2, eyebrow: "IMAGE TOOL", title: "Images to PDF", description: "Combine and arrange images into one easy-to-share PDF.", color: "violet" },
-  { id: "cam-scanner", icon: LockKeyhole, eyebrow: "IMAGE TOOL", title: "Cam Scanner", description: "Batch-clean scanned pages, extract text, and export privately.", color: "blue" },
-  { id: "pdf-compressor", icon: LockKeyhole, eyebrow: "PDF TOOL", title: "PDF compressor", description: "Make PDFs smaller for sharing and storage.", color: "mint" },
-  { id: "pdf-to-images", icon: ArrowUpRight, eyebrow: "PDF TOOL", title: "PDF to images", description: "Convert every page into images in a handy ZIP.", color: "amber" },
-  { id: "text-to-pdf", icon: FileCheck2, eyebrow: "PDF TOOL", title: "Text to PDF", description: "Create a simple, paginated PDF from plain text.", color: "rose" },
+  { id: "cam-scanner", icon: ScanLine, eyebrow: "IMAGE TOOL", title: "Cam Scanner", description: "Crop, clean, reorder, and export document scans.", color: "blue" },
+  { id: "pdf-compressor", icon: Shrink, eyebrow: "PDF TOOL", title: "PDF compressor", description: "Choose the balance of image quality and smaller size.", color: "mint" },
+  { id: "pdf-to-images", icon: FileArchive, eyebrow: "PDF TOOL", title: "PDF to images", description: "Preview rendered pages and download them together in a ZIP.", color: "amber" },
+  { id: "document-to-pdf", icon: FileText, eyebrow: "PDF TOOL", title: "Document to PDF", description: "Turn Word and text documents into a clean, shareable PDF.", color: "rose" },
 ];
 
 function Overview({ onSelect }) {
@@ -61,7 +61,7 @@ function Overview({ onSelect }) {
           <h1>Less file clutter.<br /><span>More room to work.</span></h1>
           <p>Compress, convert, and get on with your day. A thoughtful set of file tools that runs right here on your device.</p>
           <button className="btn btn-primary hero-button" onClick={() => onSelect("image-compressor")}>Try image compressor <ArrowRight size={16} /></button>
-          <div className="hero-points"><span><Check size={14} /> No sign-up</span><span><Check size={14} /> No uploads</span><span><Check size={14} /> Always private</span></div>
+          <div className="hero-points"><span><Check size={14} /> No sign-up</span><span><Check size={14} /> 100% private</span><span><Check size={14} /> Free forever</span></div>
         </div>
         <div className="hero-art" aria-hidden="true">
           <div className="art-orbit orbit-one" /><div className="art-orbit orbit-two" />
@@ -73,7 +73,7 @@ function Overview({ onSelect }) {
         <div className="hero-footnote"><LockKeyhole size={14} /> Your files never leave your device</div>
       </section>
 
-      <div className="section-heading tools-section-heading"><div><span className="page-kicker">THE TOOLKIT</span><h2>What would you like to do?</h2><p>Simple tools for your everyday file tasks.</p></div><span className="tools-count">05 TOOLS</span></div>
+      <div className="section-heading tools-section-heading"><div><span className="page-kicker">THE TOOLKIT</span><h2>What would you like to do?</h2><p>Simple tools for your everyday file tasks.</p></div><span className="tools-count">06 TOOLS</span></div>
       <div className="tool-grid">
         {toolCards.map((card) => <ToolCard key={card.id} {...card} onClick={() => onSelect(card.id)} />)}
       </div>
@@ -90,6 +90,10 @@ export default function App() {
   });
   const [menuOpen, setMenuOpen] = useState(false);
   const [toast, setToast] = useState(null);
+  const selectTool = (toolId) => {
+    setActiveTool(toolId);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? "dark" : "light";
@@ -117,18 +121,18 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <Navbar dark={dark} onToggleTheme={() => setDark((value) => !value)} onMenu={() => setMenuOpen((value) => !value)} onHome={() => setActiveTool("home")} />
-      <Sidebar activeTool={activeTool} onSelect={setActiveTool} open={menuOpen} onClose={() => setMenuOpen(false)} />
+      <Navbar dark={dark} onToggleTheme={() => setDark((value) => !value)} onMenu={() => setMenuOpen((value) => !value)} onHome={() => { selectTool("home"); setMenuOpen(false); }} menuOpen={menuOpen} />
+      <Sidebar activeTool={activeTool} onSelect={selectTool} open={menuOpen} onClose={() => setMenuOpen(false)} />
       <main className="main-content">
         <div className="content-topline"><span>WORKSPACE</span><i />{pageTitle}</div>
-        {activeTool === "home" && <Overview onSelect={setActiveTool} />}
+        {activeTool === "home" && <Overview onSelect={selectTool} />}
         <Suspense fallback={<div className="workspace-card tool-loading" role="status">Preparing your private tool…</div>}>
           {activeTool === "image-compressor" && <ImageCompressor notify={notify} />}
           {activeTool === "image-to-pdf" && <ImageToPdf notify={notify} />}
           {activeTool === "cam-scanner" && <CamScanner notify={notify} />}
           {activeTool === "pdf-compressor" && <PdfCompressor notify={notify} />}
           {activeTool === "pdf-to-images" && <PdfToImages notify={notify} />}
-          {activeTool === "text-to-pdf" && <TextToPdf notify={notify} />}
+          {activeTool === "document-to-pdf" && <DocumentToPdf notify={notify} />}
         </Suspense>
       </main>
       <Toast toast={toast} onClose={() => setToast(null)} />

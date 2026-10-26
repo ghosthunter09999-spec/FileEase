@@ -1,9 +1,9 @@
 import { FileStack, Menu, Moon, Sun } from "lucide-react";
 
-export default function Navbar({ dark, onToggleTheme, onMenu, onHome }) {
+export default function Navbar({ dark, onToggleTheme, onMenu, onHome, menuOpen = false }) {
   return (
     <header className="topbar">
-      <button className="mobile-menu icon-button" onClick={onMenu} aria-label="Open navigation">
+      <button className="mobile-menu icon-button" onClick={onMenu} aria-label={menuOpen ? "Close navigation" : "Open navigation"} aria-expanded={menuOpen} aria-controls="main-sidebar">
         <Menu size={20} />
       </button>
       <button className="brand" type="button" onClick={onHome} aria-label="FileEase home">

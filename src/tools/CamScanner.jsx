@@ -2,13 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Camera,
   Check,
-  Copy,
   Download,
   FileArchive,
   FilePlus2,
-  FileText,
   ImagePlus,
-  Languages,
   MoveLeft,
   MoveRight,
   RotateCw,
@@ -20,7 +17,6 @@ import {
 } from "lucide-react";
 import { PDFDocument } from "pdf-lib";
 import JSZip from "jszip";
-import { createWorker } from "tesseract.js";
 import ProgressBar from "../components/ProgressBar.jsx";
 import UploadZone from "../components/UploadZone.jsx";
 import { downloadBlob, formatBytes } from "../utils/files.js";
@@ -76,20 +72,14 @@ export default function CamScanner({ notify }) {
   const [imageQuality, setImageQuality] = useState(96);
   const [brightness, setBrightness] = useState(0);
   const [contrast, setContrast] = useState(18);
+  const [pdfPageSize, setPdfPageSize] = useState("a4");
   const [livePreview, setLivePreview] = useState(null);
   const [livePreviewProcessing, setLivePreviewProcessing] = useState(false);
-  const [ocrLanguage, setOcrLanguage] = useState("eng");
-  const [ocrProgress, setOcrProgress] = useState(null);
-  const [ocrStatus, setOcrStatus] = useState("");
-  const [ocrText, setOcrText] = useState("");
-  const [ocrSource, setOcrSource] = useState(null);
-  const [ocrError, setOcrError] = useState("");
   const videoRef = useRef(null);
   const cameraStreamRef = useRef(null);
   const uploadInputRef = useRef(null);
   const cropSvgRef = useRef(null);
   const selectedPage = pages.find((page) => page.id === selectedId) ?? null;
-  const selectedOcrImage = livePreview ?? selectedPage?.image ?? null;
   const previews = useMemo(() => pages.map((page) => ({
     image: URL.createObjectURL(page.image),
     original: URL.createObjectURL(page.original),
@@ -230,15 +220,16 @@ export default function CamScanner({ notify }) {
         setPages((current) => current.map((page) => page.id === retakeTarget ? updated : page));
         setSelectedId(retakeTarget);
         notify("Page retaken.");
+        stopCamera();
       } else {
         const page = createPage(image, canvas.width, canvas.height);
         setPages((current) => [...current, page]);
         setSelectedId(page.id);
         notify("Page captured.");
+        setRetakeTarget(null);
       }
       setCropEditing(false);
       setCompareSide("after");
-      stopCamera();
       setStatus("");
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Couldn't capture this page.";
@@ -250,31 +241,52 @@ export default function CamScanner({ notify }) {
   }
 
   async function addImages(files) {
-    const accepted = files.filter((file) => file.type.startsWith("image/"));
+    const accepted = files.filter((file) => file.type.startsWith("image/")
+      || ["jpg", "jpeg", "png", "webp", "gif", "bmp", "avif"].includes(file.name.split(".").pop()?.toLowerCase()));
     if (accepted.length !== files.length) notify("Choose image files to add scanned pages.", "error");
     if (!accepted.length) return;
     setProcessing(true);
-    setStatus("Adding images…");
+    setProgress(0);
+    setStatus(`Adding ${accepted.length} page${accepted.length === 1 ? "" : "s"}…`);
     setError("");
+    const added = [];
+    const failures = [];
     try {
-      const added = [];
-      for (const file of accepted) {
-        const normalized = await normalizeImage(file);
-        added.push(createPage(normalized.blob, normalized.width, normalized.height));
+      for (let index = 0; index < accepted.length; index += 1) {
+        const file = accepted[index];
+        setStatus(`Preparing page ${index + 1} of ${accepted.length}: ${file.name}`);
+        try {
+          const normalized = await normalizeImage(file);
+          const page = createPage(normalized.blob, normalized.width, normalized.height);
+          added.push(page);
+          setPages((current) => [...current, page]);
+          setSelectedId((current) => current ?? page.id);
+        } catch (cause) {
+          failures.push(`${file.name}: ${cause instanceof Error ? cause.message : "Couldn't read this image."}`);
+        }
+        setProgress(((index + 1) / accepted.length) * 100);
+        await new Promise((resolve) => window.requestAnimationFrame(resolve));
       }
-      setPages((current) => [...current, ...added]);
-      setSelectedId(added[0].id);
-      setCompareSide("after");
-      setCropEditing(false);
+      if (added.length) {
+        setCompareSide("after");
+        setCropEditing(false);
+      }
       setStatus("");
       if (cameraEnabled) stopCamera();
-      notify(`${added.length} page${added.length === 1 ? "" : "s"} added.`);
+      if (failures.length) {
+        const details = failures.join(" ");
+        setError(details);
+        notify(`Added ${added.length} of ${accepted.length} images. ${details}`, "error");
+      } else {
+        notify(`${added.length} page${added.length === 1 ? "" : "s"} added.`);
+      }
     } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "Couldn't load the selected image.";
+      const message = cause instanceof Error ? cause.message : "Couldn't load the selected images.";
       setError(message);
       notify(message, "error");
     } finally {
       setProcessing(false);
+      setProgress(0);
     }
   }
 
@@ -468,78 +480,6 @@ export default function CamScanner({ notify }) {
     }
   }
 
-  async function extractText() {
-    if (!selectedPage || !selectedOcrImage || processing || livePreviewProcessing || ocrProgress !== null) return;
-    setOcrProgress(0);
-    setOcrStatus("Preparing text recognition…");
-    setOcrError("");
-    setOcrText("");
-    setOcrSource(null);
-    let worker;
-    try {
-      worker = await createWorker(ocrLanguage, undefined, {
-        logger: ({ status: workerStatus, progress: workerProgress }) => {
-          setOcrStatus(workerStatus === "recognizing text" ? "Reading text…" : "Loading OCR language data…");
-          if (Number.isFinite(workerProgress)) setOcrProgress(Math.round(workerProgress * 100));
-        },
-      });
-      const { data } = await worker.recognize(selectedOcrImage);
-      const text = data.text.trim();
-      setOcrText(text);
-      setOcrSource(selectedOcrImage);
-      if (text) notify("Text extracted successfully.");
-      else notify("OCR finished, but no text was detected.", "error");
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "Couldn't extract text from this image.";
-      setOcrError(message);
-      notify(message, "error");
-    } finally {
-      if (worker) {
-        try {
-          await worker.terminate();
-        } catch (cause) {
-          const message = cause instanceof Error ? cause.message : "Couldn't stop the OCR worker.";
-          setOcrError((current) => current ? `${current} ${message}` : message);
-          notify(message, "error");
-        }
-      }
-      setOcrProgress(null);
-      setOcrStatus("");
-    }
-  }
-
-  async function copyExtractedText() {
-    if (!ocrText || ocrSource !== selectedOcrImage) return;
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(ocrText);
-      } else {
-        const textArea = document.createElement("textarea");
-        textArea.value = ocrText;
-        textArea.setAttribute("readonly", "");
-        textArea.style.position = "fixed";
-        textArea.style.opacity = "0";
-        document.body.append(textArea);
-        textArea.select();
-        const copied = document.execCommand("copy");
-        textArea.remove();
-        if (!copied) throw new Error("Clipboard access isn't available in this browser.");
-      }
-      notify("Extracted text copied.");
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : "Couldn't copy the extracted text.";
-      setOcrError(message);
-      notify(message, "error");
-    }
-  }
-
-  function downloadExtractedText() {
-    if (!ocrText || ocrSource !== selectedOcrImage) return;
-    const filename = `fileease-page-${selectedIndex + 1}-text.txt`;
-    downloadBlob(new Blob([`\uFEFF${ocrText}`], { type: "text/plain;charset=utf-8" }), filename);
-    notify("Extracted text downloaded.");
-  }
-
   async function rotateSelected() {
     if (!selectedPage) return;
     setProcessing(true);
@@ -634,15 +574,27 @@ export default function CamScanner({ notify }) {
     setError("");
     try {
       const pdf = await PDFDocument.create();
+      const pageSize = pdfPageSize === "letter" ? [612, 792] : [595.28, 841.89];
       for (let index = 0; index < pages.length; index += 1) {
         const pageData = pages[index];
         const embedded = await pdf.embedJpg(await pageData.image.arrayBuffer());
-        const ratio = Math.min(612 / pageData.width, 792 / pageData.height);
-        const width = pageData.width * ratio;
-        const height = pageData.height * ratio;
+        const [portraitWidth, portraitHeight] = pageSize;
+        const [width, height] = pageData.width > pageData.height
+          ? [portraitHeight, portraitWidth]
+          : pageSize;
+        const margin = 28;
+        const ratio = Math.min((width - margin * 2) / pageData.width, (height - margin * 2) / pageData.height);
+        const imageWidth = pageData.width * ratio;
+        const imageHeight = pageData.height * ratio;
         const page = pdf.addPage([width, height]);
-        page.drawImage(embedded, { x: 0, y: 0, width, height });
+        page.drawImage(embedded, {
+          x: (width - imageWidth) / 2,
+          y: (height - imageHeight) / 2,
+          width: imageWidth,
+          height: imageHeight,
+        });
         setProgress(((index + 1) / pages.length) * 100);
+        await new Promise((resolve) => window.requestAnimationFrame(resolve));
       }
       downloadBlob(new Blob([await pdf.save({ useObjectStreams: true })], { type: "application/pdf" }), "fileease-scan.pdf");
       setStatus("");
@@ -696,7 +648,7 @@ export default function CamScanner({ notify }) {
       {cameraEnabled && (
         <section className="workspace-card scanner-camera-card" aria-label="Camera preview">
           <div className="section-heading">
-            <div><h2>{retakeTarget ? "Retake page" : "Camera preview"}</h2><p>Position the full document inside the frame.</p></div>
+            <div><h2>{retakeTarget ? "Retake page" : pages.length ? "Scan another page" : "Camera preview"}</h2><p>{pages.length && !retakeTarget ? `${pages.length} page${pages.length === 1 ? "" : "s"} captured. Position the next page in the frame.` : "Position the full document inside the frame."}</p></div>
             <button className="scanner-icon-button" type="button" onClick={stopCamera} aria-label="Close camera"><X size={18} /></button>
           </div>
           <div className={`scanner-video-frame ${cameraReady ? "camera-ready" : ""}`}>
@@ -707,8 +659,9 @@ export default function CamScanner({ notify }) {
           </div>
           {cameraError && <div className="scanner-upload-fallback"><UploadZone compact accept="image/*" multiple onFiles={addImages} title="Use a document photo instead" description="Drop images here or browse your device" /></div>}
           <div className="scanner-camera-actions">
-            <button className="btn btn-outline-primary" onClick={() => uploadInputRef.current?.click()}><ImagePlus size={16} /> Upload image</button>
+            <button className="btn btn-outline-primary" disabled={processing} onClick={() => uploadInputRef.current?.click()}><ImagePlus size={16} /> Upload image</button>
             <button className="btn btn-primary scanner-capture-button" disabled={!cameraReady || processing} onClick={capturePage}><Camera size={18} /> Capture</button>
+            {pages.length > 0 && <button className="btn btn-outline-primary" disabled={processing} onClick={stopCamera}><Check size={16} /> Review {pages.length} page{pages.length === 1 ? "" : "s"}</button>}
           </div>
         </section>
       )}
@@ -780,9 +733,9 @@ export default function CamScanner({ notify }) {
               <div className="scanner-page-meta">
                 <span>{cropEditing ? "Drag the four handles to the page corners." : `Page ${selectedIndex + 1} · ${formatBytes(selectedPage.image.size)}`}</span>
                 <div className="scanner-page-actions">
-                  <button type="button" onClick={() => downloadBlob(selectedPage.image, `fileease-page-${selectedIndex + 1}.jpg`)}><Download size={14} /> Download image</button>
-                  <button type="button" onClick={() => openCamera(selectedPage.id)}><Camera size={14} /> Retake</button>
-                  <button type="button" className="scanner-delete-action" onClick={() => deletePage(selectedPage.id)}><Trash2 size={14} /> Delete</button>
+                  <button type="button" disabled={processing} onClick={() => downloadBlob(selectedPage.image, `fileease-page-${selectedIndex + 1}.jpg`)}><Download size={14} /> Download image</button>
+                  <button type="button" disabled={processing} onClick={() => openCamera(selectedPage.id)}><Camera size={14} /> Retake</button>
+                  <button type="button" className="scanner-delete-action" disabled={processing} onClick={() => deletePage(selectedPage.id)}><Trash2 size={14} /> Delete</button>
                 </div>
               </div>
 
@@ -806,7 +759,7 @@ export default function CamScanner({ notify }) {
                         ["gray", "Grayscale", "Balanced monochrome"],
                         ["enhanced", "Enhanced color", "Remove shadows and sharpen"],
                       ].map(([value, label, description]) => (
-                        <button type="button" key={value} aria-pressed={mode === value} className={`scanner-mode-option ${mode === value ? "selected" : ""}`} onClick={() => setMode(value)}>
+                        <button type="button" key={value} disabled={processing} aria-pressed={mode === value} className={`scanner-mode-option ${mode === value ? "selected" : ""}`} onClick={() => setMode(value)}>
                           <span className="scanner-mode-radio" />
                           <span><strong>{label}</strong><small>{description}</small></span>
                         </button>
@@ -846,46 +799,10 @@ export default function CamScanner({ notify }) {
                   </div>
                 </>
               )}
-              {!cropEditing && (
-                <section className="scanner-ocr" aria-labelledby="scanner-ocr-title">
-                  <div className="scanner-settings-title"><FileText size={15} /><strong id="scanner-ocr-title">Text extractor (OCR)</strong></div>
-                  <p className="scanner-hint scanner-ocr-intro">Recognize text from this page on your device. The first run downloads the selected OCR language data for local processing.</p>
-                  <div className="scanner-ocr-controls">
-                    <label className="scanner-ocr-language">
-                      <Languages size={14} />
-                      <span className="sr-only">OCR language</span>
-                      <select
-                        className="form-select"
-                        value={ocrLanguage}
-                        disabled={processing || ocrProgress !== null}
-                        onChange={(event) => setOcrLanguage(event.target.value)}
-                      >
-                        <option value="eng">English</option>
-                        <option value="eng+urd">English + Urdu</option>
-                      </select>
-                    </label>
-                    <button className="btn btn-primary" type="button" disabled={processing || livePreviewProcessing || ocrProgress !== null} onClick={extractText}>
-                      <FileText size={15} /> {ocrProgress !== null ? "Extracting…" : "Extract Text"}
-                    </button>
-                  </div>
-                  {ocrProgress !== null && <ProgressBar value={ocrProgress} label={ocrStatus || "Extracting text…"} />}
-                  {ocrError && <div className="inline-error" role="alert">{ocrError}</div>}
-                  {ocrText && ocrSource === selectedOcrImage && (
-                    <div className="scanner-ocr-result">
-                      <label htmlFor="scanner-ocr-text">Extracted text</label>
-                      <textarea id="scanner-ocr-text" dir="auto" readOnly value={ocrText} />
-                      <div className="scanner-ocr-actions">
-                        <button className="btn btn-outline-primary" type="button" onClick={copyExtractedText}><Copy size={14} /> Copy Text</button>
-                        <button className="btn btn-outline-primary" type="button" onClick={downloadExtractedText}><Download size={14} /> Download .txt</button>
-                      </div>
-                    </div>
-                  )}
-                </section>
-              )}
             </>
           )}
 
-          {processing && <ProgressBar value={progress > 0 ? progress : 60} label={status || "Processing page…"} />}
+          {processing && progress > 0 && <ProgressBar value={progress} label={status || "Processing page…"} />}
           {error && <div className="inline-error" role="alert">{error}</div>}
 
           <div className="scanner-thumbnails" aria-label="Scanned page thumbnails">
@@ -907,15 +824,15 @@ export default function CamScanner({ notify }) {
                 }}
                 onDragEnd={() => setDraggedId(null)}
               >
-                <button className="scanner-thumbnail-select" type="button" onClick={() => { setSelectedId(page.id); setCropEditing(false); setCompareSide("after"); }} aria-label={`Select page ${index + 1}`}>
+                <button className="scanner-thumbnail-select" type="button" disabled={processing} onClick={() => { setSelectedId(page.id); setCropEditing(false); setCompareSide("after"); }} aria-label={`Select page ${index + 1}`}>
                   <img src={previews[index].image} alt="" />
                   <span>Page {index + 1}</span>
                 </button>
                 <div className="scanner-thumbnail-order">
-                  <button type="button" disabled={index === 0} onClick={() => movePageBy(index, -1)} aria-label={`Move page ${index + 1} earlier`}><MoveLeft size={12} /></button>
-                  <button type="button" disabled={index === pages.length - 1} onClick={() => movePageBy(index, 1)} aria-label={`Move page ${index + 1} later`}><MoveRight size={12} /></button>
+                  <button type="button" disabled={processing || index === 0} onClick={() => movePageBy(index, -1)} aria-label={`Move page ${index + 1} earlier`}><MoveLeft size={12} /></button>
+                  <button type="button" disabled={processing || index === pages.length - 1} onClick={() => movePageBy(index, 1)} aria-label={`Move page ${index + 1} later`}><MoveRight size={12} /></button>
                 </div>
-                <button className="scanner-thumbnail-delete" type="button" onClick={() => deletePage(page.id)} aria-label={`Delete page ${index + 1}`}><X size={13} /></button>
+                <button className="scanner-thumbnail-delete" type="button" disabled={processing} onClick={() => deletePage(page.id)} aria-label={`Delete page ${index + 1}`}><X size={13} /></button>
               </div>
             ))}
           </div>
@@ -923,6 +840,12 @@ export default function CamScanner({ notify }) {
           <div className="scanner-bottom-actions">
             <button className="btn btn-outline-primary" type="button" disabled={processing} onClick={() => uploadInputRef.current?.click()}><ImagePlus size={15} /> Add images</button>
             <button className="btn btn-outline-primary" type="button" disabled={processing || !pages.length} onClick={downloadAllImages}><FileArchive size={15} /> Download all as ZIP</button>
+            <label className="scanner-pdf-size" htmlFor="scanner-pdf-size">Page size
+              <select id="scanner-pdf-size" className="form-select" value={pdfPageSize} disabled={processing} onChange={(event) => setPdfPageSize(event.target.value)}>
+                <option value="a4">A4</option>
+                <option value="letter">US Letter</option>
+              </select>
+            </label>
             <button className="btn btn-primary" type="button" disabled={processing || !pages.length} onClick={createPdf}><FilePlus2 size={16} /> Create PDF</button>
           </div>
         </section>

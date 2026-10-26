@@ -1,4 +1,5 @@
-import { Camera, FileImage, FilePlus2, FileText, Gauge, Images, LayoutDashboard, Minimize2 } from "lucide-react";
+import { useEffect, useRef } from "react";
+import { Camera, FilePlus2, FileText, Gauge, Images, LayoutDashboard, Minimize2 } from "lucide-react";
 
 export const tools = [
   { id: "home", label: "Overview", icon: LayoutDashboard, group: "WORKSPACE" },
@@ -7,15 +8,20 @@ export const tools = [
   { id: "cam-scanner", label: "Cam Scanner", icon: Camera, group: "IMAGE TOOLS" },
   { id: "pdf-compressor", label: "PDF compressor", icon: Minimize2, group: "PDF TOOLS" },
   { id: "pdf-to-images", label: "PDF to images", icon: Images, group: "PDF TOOLS" },
-  { id: "text-to-pdf", label: "Text to PDF", icon: FileText, group: "PDF TOOLS" },
+  { id: "document-to-pdf", label: "Document to PDF", icon: FileText, group: "PDF TOOLS" },
 ];
 
 export default function Sidebar({ activeTool, onSelect, open = false, onClose }) {
   const groups = [...new Set(tools.map((tool) => tool.group))];
+  const sidebarRef = useRef(null);
+  useEffect(() => {
+    sidebarRef.current?.querySelector(".nav-link.active")?.scrollIntoView({ block: "nearest" });
+  }, [activeTool]);
+
   return (
     <>
-      <div className={`sidebar-scrim ${open ? "visible" : ""}`} onClick={onClose} />
-      <aside className={`sidebar ${open ? "sidebar-open" : ""}`}>
+      <button className={`sidebar-scrim ${open ? "visible" : ""}`} type="button" aria-label="Close navigation overlay" onClick={onClose} />
+      <aside ref={sidebarRef} className={`sidebar ${open ? "sidebar-open" : ""}`} id="main-sidebar">
         <div className="workspace-label"><span className="workspace-dot" /> PERSONAL WORKSPACE</div>
         <nav aria-label="Main navigation">
           {groups.map((group) => (
@@ -28,6 +34,7 @@ export default function Sidebar({ activeTool, onSelect, open = false, onClose })
                     key={tool.id}
                     type="button"
                     className={`nav-link ${activeTool === tool.id ? "active" : ""}`}
+                    aria-current={activeTool === tool.id ? "page" : undefined}
                     onClick={() => {
                       onSelect(tool.id);
                       onClose?.();

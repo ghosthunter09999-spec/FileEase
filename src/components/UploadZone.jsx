@@ -32,9 +32,14 @@ export default function UploadZone({
         setDragging(false);
         deliver(event.dataTransfer.files);
       }}
-      onClick={() => inputRef.current?.click()}
+      onClick={(event) => {
+        if (event.target !== inputRef.current) inputRef.current?.click();
+      }}
       onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") inputRef.current?.click();
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          inputRef.current?.click();
+        }
       }}
       role="button"
       tabIndex={0}
@@ -46,6 +51,8 @@ export default function UploadZone({
         type="file"
         accept={accept}
         multiple={multiple}
+        aria-hidden="true"
+        tabIndex={-1}
         onChange={(event) => {
           deliver(event.target.files);
           event.target.value = "";

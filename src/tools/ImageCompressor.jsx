@@ -26,7 +26,6 @@ export default function ImageCompressor({ notify }) {
   const [images, setImages] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [quality, setQuality] = useState(84);
-  const [mode, setMode] = useState("smart");
   const [format, setFormat] = useState("image/webp");
   const [results, setResults] = useState({});
   const [progress, setProgress] = useState(null);
@@ -37,6 +36,7 @@ export default function ImageCompressor({ notify }) {
 
   const selectedImage = images.find((image) => image.id === selectedId) ?? null;
   const selectedResult = selectedImage ? results[selectedImage.id] : null;
+  const mode = MODES.find((item) => item.quality === quality)?.id ?? "custom";
   const outputFormat = OUTPUT_FORMATS.find((item) => item.type === format) ?? OUTPUT_FORMATS[0];
   const previewUrls = useMemo(() => images.map((image) => ({
     id: image.id,
@@ -112,7 +112,11 @@ export default function ImageCompressor({ notify }) {
   }, [images, quality, format, runVersion]);
 
   function chooseFiles(files) {
-    const accepted = files.filter((file) => ["image/jpeg", "image/png", "image/webp"].includes(file.type));
+    const accepted = files.filter((file) => {
+      const extension = file.name.split(".").pop()?.toLowerCase();
+      return ["image/jpeg", "image/png", "image/webp"].includes(file.type)
+        || ["jpg", "jpeg", "png", "webp"].includes(extension);
+    });
     if (accepted.length !== files.length) notify("Some files were skipped. Choose JPG, PNG, or WebP images.", "error");
     if (!accepted.length) return;
     const added = accepted.map((file) => ({ id: createImageId(), file }));
@@ -137,7 +141,6 @@ export default function ImageCompressor({ notify }) {
   function chooseMode(nextMode) {
     const selectedMode = MODES.find((item) => item.id === nextMode);
     if (!selectedMode) return;
-    setMode(selectedMode.id);
     setQuality(selectedMode.quality);
   }
 
@@ -182,7 +185,11 @@ export default function ImageCompressor({ notify }) {
 
   const totalOriginalSize = images.reduce((total, image) => total + image.file.size, 0);
   const completedImages = images.filter((image) => results[image.id]);
+  const readyOriginalSize = completedImages.reduce((total, image) => total + image.file.size, 0);
   const totalCompressedSize = completedImages.reduce((total, image) => total + results[image.id].size, 0);
+  const batchSaving = readyOriginalSize
+    ? Math.round(((readyOriginalSize - totalCompressedSize) / readyOriginalSize) * 100)
+    : null;
   const selectedSaving = selectedImage && selectedResult
     ? Math.round(((selectedImage.file.size - selectedResult.size) / selectedImage.file.size) * 100)
     : null;
@@ -234,7 +241,7 @@ export default function ImageCompressor({ notify }) {
             })}
           </div>
 
-          <div className="batch-settings-banner"><Sparkles size={15} /><span><strong>Apply to all images</strong> — changes to mode, quality, or format automatically recompress the entire batch.</span></div>
+          <div className="batch-settings-banner"><Sparkles size={15} /><span><strong>{mode === "custom" ? "Custom quality" : "Apply to all images"}</strong> — changes to mode, quality, or format automatically recompress the entire batch.</span></div>
 
           <fieldset className="compress-mode-fieldset" disabled={progress !== null}>
             <legend className="control-label">Compression mode</legend>
@@ -309,13 +316,17 @@ export default function ImageCompressor({ notify }) {
           <div className="comparison-panel batch-total-comparison">
             <div className="comparison-label">BATCH SIZE · {completedImages.length} OF {images.length} READY</div>
             <div className="comparison-row">
-              <div><span>Original batch</span><strong>{formatBytes(totalOriginalSize)}</strong></div>
+              <div><span>{completedImages.length === images.length ? "Original batch" : "Original · ready images"}</span><strong>{formatBytes(completedImages.length === images.length ? totalOriginalSize : readyOriginalSize)}</strong></div>
               <div className="comparison-arrow">→</div>
-              <div><span>Compressed images</span><strong>{formatBytes(totalCompressedSize)}</strong></div>
+              <div><span>{completedImages.length === images.length ? "Compressed batch" : "Compressed · ready images"}</span><strong>{formatBytes(totalCompressedSize)}</strong></div>
+              {batchSaving !== null && <div className={`comparison-saving ${batchSaving < 0 ? "comparison-increased" : ""}`}><strong>{batchSaving > 0 ? `−${batchSaving}%` : batchSaving < 0 ? `+${Math.abs(batchSaving)}%` : "0%"}</strong><span>{batchSaving < 0 ? "larger" : "saved"}</span></div>}
             </div>
           </div>
 
           <div className="tool-actions">
+            {selectedImage && selectedResult && <button className="btn btn-outline-primary" type="button" disabled={progress !== null} onClick={() => downloadBlob(selectedResult, makeOutputName(selectedImage.file.name, "compressed", outputFormat.extension))}>
+              <Download size={16} /> Download selected
+            </button>}
             <button className="btn btn-outline-primary" type="button" disabled={!completedImages.length || progress !== null} onClick={downloadAll}>
               <Download size={16} /> Download all as ZIP
             </button>
