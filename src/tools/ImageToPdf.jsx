@@ -10,7 +10,7 @@ export default function ImageToPdf({ notify }) {
   const [result, setResult] = useState(null);
   const [pageSize, setPageSize] = useState("fit");
   const [margin, setMargin] = useState(36);
-  const [filename, setFilename] = useState("fileease-images");
+  const [filename, setFilename] = useState("fileflow-images");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [draggedIndex, setDraggedIndex] = useState(null);
@@ -63,7 +63,7 @@ export default function ImageToPdf({ notify }) {
   }
 
   function downloadPdf() {
-    const name = filename.trim().replace(/\.pdf$/i, "") || "fileease-images";
+    const name = filename.trim().replace(/\.pdf$/i, "") || "fileflow-images";
     downloadBlob(result, `${name}.pdf`);
   }
 

@@ -1,14 +1,18 @@
 import { useEffect, useRef } from "react";
-import { Camera, FilePlus2, FileText, Gauge, Images, LayoutDashboard, Minimize2 } from "lucide-react";
+import { Archive, Camera, FilePlus2, FileText, Files, Gauge, Images, LayoutDashboard, Minimize2, Scissors } from "lucide-react";
 
 export const tools = [
   { id: "home", label: "Overview", icon: LayoutDashboard, group: "WORKSPACE" },
   { id: "image-compressor", label: "Image compressor", icon: Gauge, group: "IMAGE TOOLS", tag: "Popular" },
   { id: "image-to-pdf", label: "Images to PDF", icon: FilePlus2, group: "IMAGE TOOLS" },
   { id: "cam-scanner", label: "Cam Scanner", icon: Camera, group: "IMAGE TOOLS" },
+  { id: "file-compressor", label: "File compressor", icon: Archive, group: "FILE TOOLS" },
   { id: "pdf-compressor", label: "PDF compressor", icon: Minimize2, group: "PDF TOOLS" },
   { id: "pdf-to-images", label: "PDF to images", icon: Images, group: "PDF TOOLS" },
   { id: "document-to-pdf", label: "Document to PDF", icon: FileText, group: "PDF TOOLS" },
+  { id: "document-merger", label: "Document merger", icon: Files, group: "PDF TOOLS" },
+  { id: "pdf-splitter", label: "PDF splitter", icon: Scissors, group: "PDF TOOLS" },
+  { id: "document-compressor", label: "Document compressor", icon: Minimize2, group: "PDF TOOLS" },
 ];
 
 export default function Sidebar({ activeTool, onSelect, open = false, onClose }) {
@@ -54,7 +58,7 @@ export default function Sidebar({ activeTool, onSelect, open = false, onClose })
             <span className="privacy-check">✓</span>
             <div><strong>Your privacy matters</strong><p>Files are processed locally and never uploaded.</p></div>
           </div>
-          <div className="sidebar-version">FILEEASE · YOUR PRIVATE FILE TOOLKIT</div>
+          <div className="sidebar-version">FILEFLOW · YOUR PRIVATE FILE TOOLKIT</div>
         </div>
       </aside>
     </>

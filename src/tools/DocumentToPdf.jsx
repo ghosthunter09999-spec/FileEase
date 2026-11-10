@@ -1,39 +1,10 @@
 import { useState } from "react";
-import JSZip from "jszip";
 import { Download, FileText, FileUp, Type } from "lucide-react";
 import ProgressBar from "../components/ProgressBar.jsx";
 import UploadZone from "../components/UploadZone.jsx";
 import { documentToPdf } from "../lib/pdf.js";
 import { downloadBlob, formatBytes, readFileAsText } from "../utils/files.js";
-
-async function readDocx(file) {
-  const archive = await JSZip.loadAsync(file);
-  const documentEntry = archive.file("word/document.xml");
-  if (!documentEntry) throw new Error("This Word file doesn't contain a readable document.");
-
-  const xml = await documentEntry.async("text");
-  const parsed = new DOMParser().parseFromString(xml, "application/xml");
-  if (parsed.querySelector("parsererror")) throw new Error("This Word file couldn't be read. Try saving it as a new .docx file.");
-
-  const body = Array.from(parsed.getElementsByTagName("*")).find((element) => element.localName === "body");
-  if (!body) throw new Error("This Word file doesn't contain readable document text.");
-  const paragraphs = Array.from(body.getElementsByTagName("*"))
-    .filter((element) => element.localName === "p")
-    .map((paragraph) => {
-      const parts = [];
-      function collect(node) {
-        for (const child of node.children) {
-          if (child.localName === "t") parts.push(child.textContent ?? "");
-          else if (child.localName === "tab") parts.push("\t");
-          else if (child.localName === "br" || child.localName === "cr") parts.push("\n");
-          else collect(child);
-        }
-      }
-      collect(paragraph);
-      return parts.join("");
-    });
-  return paragraphs.join("\n");
-}
+import { readDocxText } from "../utils/document.js";
 
 export default function DocumentToPdf({ notify }) {
   const [text, setText] = useState("");
@@ -61,7 +32,7 @@ export default function DocumentToPdf({ notify }) {
     setProgress(0);
     setStatus("Reading your document…");
     try {
-      const loadedText = extension === "docx" ? await readDocx(file) : await readFileAsText(file);
+      const loadedText = extension === "docx" ? await readDocxText(file) : await readFileAsText(file);
       setText(loadedText);
       setFilename(file.name.replace(/\.(docx|txt)$/i, ""));
       setFileDetails({ name: file.name, size: file.size });

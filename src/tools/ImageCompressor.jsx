@@ -172,7 +172,7 @@ export default function ImageCompressor({ notify }) {
       const archive = await zip.generateAsync({ type: "blob" }, (metadata) => {
         setProgress({ value: metadata.percent, label: "Creating ZIP archive…" });
       });
-      downloadBlob(archive, "fileease-compressed-images.zip");
+      downloadBlob(archive, "fileflow-compressed-images.zip");
       notify(`Downloaded ${count} compressed image${count === 1 ? "" : "s"} as a ZIP.`);
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Couldn't create the ZIP archive.";

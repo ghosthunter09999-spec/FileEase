@@ -553,7 +553,7 @@ export default function CamScanner({ notify }) {
         setProgress(metadata.percent);
         setStatus("Creating ZIP archive…");
       });
-      downloadBlob(archive, "fileease-scanned-pages.zip");
+      downloadBlob(archive, "fileflow-scanned-pages.zip");
       notify(`Downloaded ${pages.length} scanned page${pages.length === 1 ? "" : "s"} as a ZIP.`);
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : "Couldn't create a ZIP of scanned pages.";
@@ -596,7 +596,7 @@ export default function CamScanner({ notify }) {
         setProgress(((index + 1) / pages.length) * 100);
         await new Promise((resolve) => window.requestAnimationFrame(resolve));
       }
-      downloadBlob(new Blob([await pdf.save({ useObjectStreams: true })], { type: "application/pdf" }), "fileease-scan.pdf");
+      downloadBlob(new Blob([await pdf.save({ useObjectStreams: true })], { type: "application/pdf" }), "fileflow-scan.pdf");
       setStatus("");
       notify("Your scanned PDF has been downloaded.");
     } catch (cause) {
@@ -733,7 +733,7 @@ export default function CamScanner({ notify }) {
               <div className="scanner-page-meta">
                 <span>{cropEditing ? "Drag the four handles to the page corners." : `Page ${selectedIndex + 1} · ${formatBytes(selectedPage.image.size)}`}</span>
                 <div className="scanner-page-actions">
-                  <button type="button" disabled={processing} onClick={() => downloadBlob(selectedPage.image, `fileease-page-${selectedIndex + 1}.jpg`)}><Download size={14} /> Download image</button>
+                  <button type="button" disabled={processing} onClick={() => downloadBlob(selectedPage.image, `fileflow-page-${selectedIndex + 1}.jpg`)}><Download size={14} /> Download image</button>
                   <button type="button" disabled={processing} onClick={() => openCamera(selectedPage.id)}><Camera size={14} /> Retake</button>
                   <button type="button" className="scanner-delete-action" disabled={processing} onClick={() => deletePage(selectedPage.id)}><Trash2 size={14} /> Delete</button>
                 </div>

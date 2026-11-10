@@ -67,7 +67,7 @@ export default function PdfToImages({ notify }) {
         zip.file(`page-${String(index + 1).padStart(3, "0")}.${format}`, page.bytes);
       });
       const blob = await zip.generateAsync({ type: "blob" }, (metadata) => setProgress(metadata.percent));
-      downloadBlob(blob, "fileease-pages.zip");
+      downloadBlob(blob, "fileflow-pages.zip");
       setProgress(100);
       notify("Your ZIP archive is ready.");
     } catch (error) {

@@ -1,14 +1,18 @@
-# FileEase
+# FileFlow
 
-FileEase is a private, browser-only toolkit for common image and PDF tasks. Files are read and processed locally; the application has no upload API or backend.
+FileFlow is a private, browser-only toolkit for common image and PDF tasks. Files are read and processed locally; the application has no upload API or backend.
 
 ## Features
 
 - Batch-compress JPG, PNG, and WebP images with shared presets, live previews, clear size comparisons, and ZIP downloads.
 - Combine, drag-reorder, and fit JPG/PNG images into original-size, A4, or US Letter PDFs.
 - Compress PDFs with adjustable image quality and resolution. This can significantly reduce file size, but text selection, forms, and vector content are not retained.
+- Compress arbitrary files into a DEFLATE ZIP archive with selectable compression level. Already-compressed media may not shrink further.
+- Compress PDF documents by reducing page image quality/resolution, or recompress DOCX package contents. PDF text/forms/vectors are rasterized; DOCX image assets are not resized, so savings can be modest.
 - Convert PDF pages into PNG/JPG images, preview the results, choose output resolution, and download them as a ZIP.
 - Convert `.txt` and `.docx` documents into paginated PDFs, with A4 and Letter page sizes.
+- Merge multiple PDFs, DOCX/TXT documents, and JPG/PNG images into one PDF. Reorder inputs and pages, preview the selected file, and download the result locally. Word documents are converted as readable text; their original styling is not preserved.
+- Split PDFs into comma-separated page ranges and download individual PDFs or a ZIP of all ranges.
 - Scan multiple pages without reopening the camera, auto-crop and perspective-flatten document photos, batch-apply shared cleaning settings, reorder pages, and export A4/Letter PDFs or image ZIPs.
 - Responsive interface with a persistent light/dark theme.
 
@@ -47,17 +51,21 @@ Suggested page titles and descriptions (also applied when a visitor opens a tool
 
 | Page | Suggested title | Suggested meta description |
 | --- | --- | --- |
-| Home | FileEase — Free Private Image & PDF Tools | Free online image and PDF compressor and converter tools. Compress images, create PDFs, and convert documents privately in your browser. |
-| Image Compressor | Free Image Compressor (JPG, PNG, WebP) — FileEase | Compress JPG, PNG, and WebP images online for free. Adjust image quality, compare file sizes, and download privately in your browser. |
-| Images to PDF | Images to PDF Converter — Combine Photos Free \| FileEase | Combine and reorder JPG or PNG images into one PDF online for free. Your images are processed locally and never uploaded. |
-| PDF Compressor | Free PDF Compressor — Reduce PDF File Size \| FileEase | Reduce PDF file size with adjustable image quality. Compress documents locally in your browser without uploading your files. |
-| PDF to Images | PDF to JPG & PNG Converter — Download ZIP \| FileEase | Convert PDF pages to PNG or JPG images and download them as a ZIP. Fast, free, and processed privately in your browser. |
-| Document to PDF | Document to PDF Converter — Convert DOCX & TXT \| FileEase | Convert Word DOCX and plain text documents to clean PDFs for free, right in your browser. |
+| Home | FileFlow — Private file tools, made simple | Compress, convert, and organize files with simple browser-based tools. Your files stay on your device. |
+| Image Compressor | Image Compressor — FileFlow | Compress JPG, PNG, and WebP images. Adjust image quality, compare file sizes, and download privately in your browser. |
+| Images to PDF | Images to PDF — FileFlow | Combine and reorder JPG or PNG images into one PDF. Your images are processed locally. |
+| PDF Compressor | PDF Compressor — FileFlow | Reduce PDF file size with adjustable image quality. Compress documents locally in your browser without uploading your files. |
+| PDF to Images | PDF to Images — FileFlow | Convert PDF pages to PNG or JPG images and download them as a ZIP. Processed privately in your browser. |
+| Document to PDF | Document to PDF — FileFlow | Convert DOCX and plain text documents to clean PDFs in your browser. |
+| Document Merger | Document Merger — FileFlow | Combine and reorder PDFs, Word documents, text, and images into a PDF directly in your browser. |
+| PDF Splitter | PDF Splitter — FileFlow | Extract page ranges from a PDF into separate downloadable PDF files, processed locally. |
+| File Compressor | File Compressor — FileFlow | Compress multiple files locally into a downloadable ZIP archive. |
+| Document Compressor | Document Compressor — FileFlow | Compress PDF pages or recompress a DOCX package directly in your browser. |
 
 For tool pages to be independently indexed and included as individual sitemap entries, give each tool a real path (for example `/image-compressor/`) and configure hosting for SPA route fallback or prerender those routes. Changing metadata after client-side interaction alone does not create distinct crawlable URLs.
 
 ## Privacy
 
-Your files never leave your device. File processing uses browser APIs and local JavaScript libraries. No file contents are sent to a server. The optional Google Fonts stylesheet can make a network request for fonts; use system fonts or self-host the fonts if your deployment must make no third-party requests.
+Your files never leave your device. File processing uses browser APIs and local JavaScript libraries; no file contents or analytics are sent to a server. The interface uses system fonts and does not require third-party font requests.
 
 Camera scanning requires browser camera permission and a secure context (HTTPS or `localhost`). If camera access is unavailable, add document photos from your device instead. Automatic crop detection works best when the page contrasts with the surface behind it; when it cannot identify page edges confidently, adjust the four crop handles manually. Detection, perspective correction, and enhancement run locally in your browser. The document converter reads DOCX and plain text files locally; legacy binary DOC files should be saved as DOCX or TXT before conversion.
